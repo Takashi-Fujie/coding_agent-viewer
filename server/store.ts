@@ -1,25 +1,29 @@
 /**
- * ログディレクトリのスナップショット構築。仕様は docs/design/API.md。
+ * ログディレクトリのスナップショット構築。仕様は docs/design/API.md と docs/design/CORE.md（Issue #28）。
+ *
+ * セッションの発見はログソース抽象（server/sources/）に委ね、ここは配置規約を知らない。
+ * ソースが返した一覧を buildIndex に流し、グループ（プロジェクト相当）ごとにまとめるだけ。
  *
  * リクエストごとに buildIndex() を呼ぶ。鮮度管理（reuse / incremental / rebuild）は
  * SPEC-CORE の decideStrategy に委ねるため、ここでは TTL を持たない
  * （変更が無ければ stat のコストだけで最新のインデックスが得られる）。
  */
-import { readdir } from 'node:fs/promises';
-import { basename, join } from 'node:path';
 import { buildIndex } from './core/indexer.js';
 import type { SessionIndex } from './core/types.js';
+import type { LogSource } from './sources/types.js';
 
 export interface SessionEntry {
-  /** ファイル名から拡張子を除いたもの。API の session id。 */
+  /** 公開セッション ID（ソースが決める。claude は basename、それ以外は `<source>:<basename>`）。 */
   id: string;
   projectId: string;
+  /** どのソースが発見したか。API DTO には露出させない内部フィールド。 */
+  sourceId: string;
   filePath: string;
   index: SessionIndex;
 }
 
 export interface ProjectEntry {
-  /** ~/.claude/projects 直下のディレクトリ名。API の project id。 */
+  /** グループ ID（claude は ~/.claude/projects 直下のディレクトリ名）。API の project id。 */
   id: string;
   sessions: SessionEntry[];
 }
@@ -30,49 +34,37 @@ export interface Snapshot {
 }
 
 export interface StoreOptions {
-  logDir: string;
+  sources: LogSource[];
   cacheDir: string;
 }
 
 /**
- * logDir 配下の全プロジェクト・全セッションのインデックスを構築する。
- * logDir が無い場合は空のスナップショットを返す（エラーにしない）。
+ * 全ソースの発見結果をインデックス化してスナップショットにまとめる。
+ * グループはソースが返した順序のまま並べる（claude ソースは名前順で返すため従来と同一）。
+ * セッションを持たない空グループも保持する（.jsonl の無いプロジェクトディレクトリは
+ * 旧実装でも空プロジェクトとして API に現れていた）。
  */
 export async function loadSnapshot(options: StoreOptions): Promise<Snapshot> {
-  let dirents;
-  try {
-    dirents = await readdir(options.logDir, { withFileTypes: true });
-  } catch {
-    return { projects: [], sessionsById: new Map() };
-  }
-
   const projects: ProjectEntry[] = [];
   const sessionsById = new Map<string, SessionEntry>();
 
-  const dirs = dirents.filter((d) => d.isDirectory()).sort((a, b) => a.name.localeCompare(b.name));
-  for (const dir of dirs) {
-    const projectDir = join(options.logDir, dir.name);
-    // サブディレクトリ（subagent の JSONL 置き場）も含めて再帰列挙する
-    const entries = await readdir(projectDir, { recursive: true, withFileTypes: true });
-    const files = entries
-      .filter((e) => e.isFile() && e.name.endsWith('.jsonl'))
-      .map((e) => join(e.parentPath, e.name))
-      .sort();
-
-    const sessions: SessionEntry[] = [];
-    for (const filePath of files) {
-      const { index } = await buildIndex(filePath, { cacheDir: options.cacheDir });
-      const entry: SessionEntry = {
-        id: basename(filePath, '.jsonl'),
-        projectId: dir.name,
-        filePath,
-        index,
-      };
-      sessions.push(entry);
-      sessionsById.set(entry.id, entry);
+  for (const source of options.sources) {
+    for (const group of await source.discoverGroups()) {
+      const sessions: SessionEntry[] = [];
+      for (const discovered of group.sessions) {
+        const { index } = await buildIndex(discovered.filePath, { cacheDir: options.cacheDir });
+        const entry: SessionEntry = {
+          id: discovered.sessionId,
+          projectId: group.groupId,
+          sourceId: source.id,
+          filePath: discovered.filePath,
+          index,
+        };
+        sessions.push(entry);
+        sessionsById.set(entry.id, entry);
+      }
+      projects.push({ id: group.groupId, sessions });
     }
-
-    projects.push({ id: dir.name, sessions });
   }
 
   return { projects, sessionsById };

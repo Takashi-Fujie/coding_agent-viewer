@@ -1,6 +1,6 @@
 # SPEC-CORE — JSONL パーサとインデクサ（詳細設計書）
 
-担当 Issue: #2（パーサ・インデクサ）/ #4（実測値照合レポート）。人間向けの基本仕様書は [docs/spec/CORE.md](../spec/CORE.md)。
+担当 Issue: #2（パーサ・インデクサ）/ #4（実測値照合レポート）/ #28（ログソース抽象化とセッション発見）。人間向けの基本仕様書は [docs/spec/CORE.md](../spec/CORE.md)。
 
 ## 設計上の制約
 
@@ -9,6 +9,55 @@
 - **増分更新**: JSONL は追記のみなので `fileSize > lastOffset` なら差分だけ解析。ファイル縮小・mtime 逆行を検知したら全再構築。
 - **壊れた JSON 行はスキップして継続する**（1 行の破損で全体を落とさない）。
 - **末尾の未完了行は確定させない。** 改行で終わっていない行は書き込み途中とみなして `lastOffset` に含めない。確定させると次回の増分更新で同じ行が二重に現れる。
+
+## ログソース抽象とセッション発見（Issue #28）
+
+### データモデル
+
+`server/sources/types.ts` に置く。
+
+```ts
+/** 発見された 1 セッション。ファイルの中身はまだ読んでいない（発見はパスと命名だけで成立させる）。 */
+interface DiscoveredSession {
+  /** API に露出する公開 ID。既定ソース（claude）は basename のまま、それ以外は `<source>:<basename>`。 */
+  sessionId: string;
+  filePath: string;
+}
+
+/** グループ（プロジェクト相当）。空グループも表現できる入れ子構造にする（下記の旧挙動保存）。 */
+interface DiscoveredGroup {
+  /** claude はディレクトリ名、codex は日付 `YYYY-MM-DD`（暫定・#31 で見直し可）。 */
+  groupId: string;
+  sessions: DiscoveredSession[];
+}
+
+interface LogSource {
+  /** ソース識別子（'claude' / 'codex'）。ID 接頭辞の名前空間に使う。 */
+  id: string;
+  /** ルート配下を走査してグループとセッションを返す。ルートが無ければ空配列（エラーにしない）。 */
+  discoverGroups(): Promise<DiscoveredGroup[]>;
+}
+```
+
+返り値をフラットなセッション一覧ではなく**グループ単位**にしているのは、`.jsonl` を 1 件も
+含まないプロジェクトディレクトリ（旧 loadSnapshot はセッション 0 件のプロジェクトとして
+API に返していた。実ログに 4 件実在）を表現するため。フラットな一覧では空グループの
+存在情報が落ち、`/api/projects` の結果が変わってしまう。
+
+### 実装方針
+
+- `server/sources/claude.ts`: 現在 `store.ts` にある走査（logDir 直下ディレクトリ = プロジェクト、配下再帰の `*.jsonl` = セッション）をそのまま移す。**公開 ID・グループ ID・並び順・空プロジェクトの扱いを含め従来と同一**（既存テスト不変が受け入れの根拠）
+- `server/sources/codex.ts`: `sessionsDir`（本番 `~/.codex/sessions`）配下の `YYYY/MM/DD` 日付階層を再帰探索し、`rollout-*.jsonl` 命名に一致するファイルだけをセッションとする。グループは rollout を含む日付のみ（空の日付ディレクトリはグループにしない）。`session_index.jsonl` は読まない（rollout 単独で発見が成立する）。ファイル名の timestamp / UUID の**解釈はしない**（basename をそのまま ID に使う。パースが必要になるのは #29 以降）
+- `server/store.ts`: `loadSnapshot({ sources, cacheDir })` へ変更し、ソース一覧を反復して `buildIndex` を呼ぶだけにする（配置規約の知識を持たない）。`SessionEntry` に `sourceId` を追加する（内部フィールド。API DTO には露出させない）
+- `server/app.ts`: `AppOptions` は変更しない。`logDir` から Claude ソースを構築して渡す。**#28 では Codex ソースを登録しない**（正規化の無い状態で登録すると全行 unknown のセッションが集計に漏れるため。#29 で登録する）
+- インデックス処理（`buildIndex`）は現状 Claude 固有の normalize を内蔵している。#29 でソースごとの normalize を差し込むとき、この `LogSource` にインデックス構築のフックを追加する（#28 では発見の抽象までとし、先回りのインターフェースを作らない）
+- キャッシュパスは既に `hash(絶対パス)` で命名しているため、ソース間で衝突しない（追加対応は不要）
+- `server/live.ts` の `sessionIdOf`（basename 規約の複製）は #28 では変更しない（監視対象が Claude logDir のみのため）。複数ルート監視と合わせて #31 で ID 導出をソース抽象へ寄せる
+- `scripts/report.ts` は独自走査の Claude 専用ツールであり、変更しない
+
+### テスト方針
+
+発見のテストは一時ディレクトリに実命名規約（`rollout-<ISO日時（ハイフン区切り）>-<UUIDv7>.jsonl`）どおりのツリーを組み立てて検証する（`tests/fixtures/codex/` の内容フィクスチャは中身の契約用であり、発見テストには使わない）。
 
 ## 実測（Issue #2 時点）
 
@@ -70,6 +119,19 @@
 - [x] `SPEC-CORE-044` mtimeMs がキャッシュより過去へ逆行したら全再構築する
 - [x] `SPEC-CORE-045` schemaVersion が現行と異なるキャッシュは破棄して全再構築する
 - [x] `SPEC-CORE-046` 増分更新後のインデックスは同一ファイルを全再構築した結果と一致する
+
+### ログソース抽象とセッション発見（Issue #28）
+
+- [x] `SPEC-CORE-070` loadSnapshot はログソース一覧を受け取り、配置規約を知らずにソースが発見したセッションだけをインデックス化する
+- [x] `SPEC-CORE-071` Claude ソースは logDir 直下のディレクトリをグループ、配下再帰の *.jsonl をセッションとして従来の loadSnapshot と同一の一覧を返す
+- [x] `SPEC-CORE-072` Claude ソースの公開セッション ID は接頭辞なしの basename のまま変わらない
+- [x] `SPEC-CORE-073` Claude 以外のソースの公開セッション ID は `<source>:<basename>` 形式になり、同名ファイルがあってもソース間で衝突しない
+- [x] `SPEC-CORE-074` Codex ソースは sessions 配下の YYYY/MM/DD 日付階層を再帰探索し、rollout-*.jsonl を日付 `YYYY-MM-DD` のグループでセッションとして発見する
+- [x] `SPEC-CORE-075` Codex ソースは session_index.jsonl を読まず、rollout ファイル単独でセッションを発見する
+- [x] `SPEC-CORE-076` rollout 命名に一致しないファイルと .jsonl 以外の拡張子は発見対象にしない
+- [x] `SPEC-CORE-077` ルートディレクトリが存在しないソースは空一覧を返し、エラーにしない
+- [x] `SPEC-CORE-078` アプリ構成には Claude ソースのみ登録され、既存 API レスポンスと集計値が変わらない
+- [x] `SPEC-CORE-079` .jsonl を含まないプロジェクトディレクトリも空グループとして返し、従来どおりセッション 0 件のプロジェクトとして API に現れる
 
 ### 実測値照合レポート（Issue #4・`scripts/report.ts`）
 
