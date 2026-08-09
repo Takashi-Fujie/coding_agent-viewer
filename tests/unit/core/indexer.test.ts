@@ -203,7 +203,7 @@ describe('buildIndex', () => {
 });
 
 describe('SPEC-DASH: スキーマ版数', () => {
-  it('SPEC-DASH-003: INDEX_SCHEMA_VERSION は 3 である（isToolError / hook を持たない旧キャッシュを再利用しない）', () => {
-    expect(INDEX_SCHEMA_VERSION).toBe(3);
+  it('SPEC-DASH-003: INDEX_SCHEMA_VERSION は 3 以上である（isToolError / hook を持たない旧キャッシュを再利用しない）', () => {
+    expect(INDEX_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
   });
 });

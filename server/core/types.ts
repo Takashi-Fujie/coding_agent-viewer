@@ -13,8 +13,10 @@
  *    speed が無いまま残り、fast mode のコストを静かに過小計上する。
  * 3: user に isToolError、attachment に hookName / hookEvent を追加（SPEC-DASH-001/002）。
  *    上げないと旧キャッシュのレコードが失敗 0 件・hook 履歴なしとして静かに欠損する。
+ * 4: 走査文脈 scanState を追加（SPEC-CODEX-066/067）。上げないと scanState の無い旧
+ *    キャッシュから増分再開したとき、Codex の model 関連付けが静かに失われる。
  */
-export const INDEX_SCHEMA_VERSION = 3;
+export const INDEX_SCHEMA_VERSION = 4;
 
 /** 走査で得られる生の 1 行。offset / length はバイト単位で、改行は length に含めない。 */
 export interface RawLine {
@@ -174,6 +176,11 @@ export interface SessionIndex {
   mtimeMs: number;
   /** 最後の「完全な行」の直後の位置。次回はここから差分を読む。 */
   lastOffset: number;
+  /**
+   * 走査終了時点の走査文脈（RecordNormalizer.serialize() の値）。増分再開時に
+   * createNormalizer(state) へ渡して復元する。文脈を持たないソースは undefined。
+   */
+  scanState?: unknown;
   records: IndexRecord[];
   summary: SessionSummary;
 }

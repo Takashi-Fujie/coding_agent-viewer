@@ -55,11 +55,13 @@ export function sessionRoutes(ctx: ApiContext): Router {
       const records = session.index.records;
       const page = records.slice(start, start + limit);
 
+      // 本文正規化はソース固有（Codex は content 構造が異なる）。発見したソースへ委ねる。
+      const toBody = snapshot.sourcesById.get(session.sourceId)?.normalizeBody ?? normalizeBody;
       const items = await Promise.all(
         page.map(async (record, i) => ({
           index: start + i,
           meta: record,
-          body: normalizeBody(await readRecordAt(session.filePath, record.offset, record.length)),
+          body: toBody(await readRecordAt(session.filePath, record.offset, record.length)),
         })),
       );
 

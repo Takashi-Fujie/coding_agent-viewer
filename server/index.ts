@@ -27,6 +27,7 @@ if (invokedDirectly) {
     logDir: join(claudeDir, 'projects'),
     cacheDir: '.cache',
     claudeDir,
+    codexSessionsDir: join(homedir(), '.codex', 'sessions'),
   });
 
   const port = resolvePort(process.env);

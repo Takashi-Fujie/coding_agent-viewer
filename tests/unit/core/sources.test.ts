@@ -151,6 +151,8 @@ describe('loadSnapshot とソースの合成', () => {
       await writeJsonl(filePath, [{ type: 'user', uuid: 'u-1', message: { role: 'user', content: '<synthetic>' } }]);
       await writeJsonl(join(root, 'not-discovered.jsonl'), [{ type: 'user', uuid: 'u-9' }]);
       const fake: LogSource = {
+        // 正規化フックは Claude のものを流用し、発見だけを固定する
+        ...createClaudeSource({ logDir: join(root, 'unused') }),
         id: 'fake',
         discoverGroups: async () => [
           { groupId: 'g1', sessions: [{ sessionId: 'fake:anywhere', filePath }] },

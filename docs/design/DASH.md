@@ -97,7 +97,7 @@ tool_result（user レコード）には `tool_use_id` しか無い。ツール�
 
 - [x] `SPEC-DASH-001` tool_result の `is_error: true` を持つ user レコードは isToolError が true になり、無いものは undefined のままになる
 - [x] `SPEC-DASH-002` `hook_` で始まる attachment から hookName / hookEvent がインデックスに保持される
-- [x] `SPEC-DASH-003` INDEX_SCHEMA_VERSION は 3 であり、旧版キャッシュは再利用されず再構築される
+- [x] `SPEC-DASH-003` INDEX_SCHEMA_VERSION は 3 以上であり、isToolError / hook を持たない旧版キャッシュは再利用されず再構築される（#29 で 4 へ繰り上げ。SPEC-CODEX-067）
 
 ### 集計（ローカル日付）
 
