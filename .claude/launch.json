@@ -7,6 +7,12 @@
       "runtimeArgs": ["run", "serve"],
       "port": 4518,
       "autoPort": true
+    },
+    {
+      "name": "viewer-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:web"],
+      "port": 5173
     }
   ]
 }
