@@ -16,6 +16,7 @@ import { createLiveHub } from './live.js';
 import type { LiveHub } from './live.js';
 import { loadSnapshot } from './store.js';
 import { createClaudeSource } from './sources/claude.js';
+import { createCodexSource } from './sources/codex.js';
 import { configRoutes } from './routes/config.js';
 import { liveRoutes } from './routes/live.js';
 import { overviewRoutes } from './routes/overview.js';
@@ -30,6 +31,11 @@ export interface AppOptions {
   cacheDir: string;
   /** 設定・定義の読み取り元（本番は ~/.claude）。 */
   claudeDir: string;
+  /**
+   * Codex rollout のルート（本番は ~/.codex/sessions）。指定されたときだけ Codex
+   * ソースを登録する（SPEC-CODEX-068。既定で実 ~/.codex に触れさせない）。
+   */
+  codexSessionsDir?: string | undefined;
   /** 価格表のパス。省略時は server/pricing.json。 */
   priceTablePath?: string | undefined;
   /** フロントエンドのビルド成果物（本番は web/dist）。存在するときだけ静的配信する。 */
@@ -46,9 +52,10 @@ export const DEFAULT_WEB_DIST_DIR = fileURLToPath(new URL('../web/dist', import.
 
 export function createApp(options: AppOptions): Express {
   const loadTable = (): ReturnType<typeof loadPriceTable> => loadPriceTable(options.priceTablePath);
-  // #28 時点の登録ソースは Claude のみ。Codex ソースは正規化（#29）が入ってから登録する
-  // （正規化なしで登録すると全行 unknown の壊れたセッションが集計へ漏れる）。
   const sources = [createClaudeSource({ logDir: options.logDir })];
+  if (options.codexSessionsDir !== undefined) {
+    sources.push(createCodexSource({ sessionsDir: options.codexSessionsDir }));
+  }
   const ctx: ApiContext = {
     load: () => loadSnapshot({ sources, cacheDir: options.cacheDir }),
     loadTable,

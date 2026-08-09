@@ -7,6 +7,7 @@
  */
 import { open } from 'node:fs/promises';
 import { normalizeRecord } from './normalize.js';
+import type { RecordNormalizer } from '../sources/types.js';
 import type { IndexRecord, RawLine } from './types.js';
 
 /** 既定の読み込みチャンクサイズ。実測で 1 行最大 1.3MB なので余裕を持たせる。 */
@@ -16,6 +17,8 @@ const NEWLINE = 0x0a;
 
 export interface ScanOptions {
   chunkSize?: number;
+  /** ソース固有の正規化器。省略時は Claude のステートレス正規化（後方互換）。 */
+  normalizer?: RecordNormalizer | undefined;
 }
 
 export interface ScanResult {
@@ -139,7 +142,10 @@ export async function scanFile(
       continue;
     }
 
-    const record = normalizeRecord(raw, { offset: line.offset, length: line.length });
+    const location = { offset: line.offset, length: line.length };
+    const record = options.normalizer
+      ? options.normalizer.normalize(raw, location)
+      : normalizeRecord(raw, location);
     if (record) records.push(record);
   }
 

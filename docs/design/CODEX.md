@@ -1,6 +1,6 @@
-# SPEC-CODEX — Codex ログのスキーマ調査と合成フィクスチャ（詳細設計書）
+# SPEC-CODEX — Codex ログ対応（詳細設計書）
 
-担当 Issue: #17。人間向けの基本仕様書は [docs/spec/CODEX.md](../spec/CODEX.md)。後続: #28（ソース抽象化）→ #29（会話正規化）→ #30（usage 会計）→ #31（UI 統合）。
+担当 Issue: #17（スキーマ調査・フィクスチャ）・#29（会話正規化）。人間向けの基本仕様書は [docs/spec/CODEX.md](../spec/CODEX.md)。後続: #30（usage 会計）→ #31（UI 統合）。#28（ソース抽象化）は CORE.md 側。
 
 rollout JSONL には公開された安定スキーマ契約が無い。この文書の契約はすべて**下記の観測条件における実測**であり、「確定」は観測範囲で反例が無かったことを、「未観測・仮説」は観測に現れなかったことを意味する。後続 Issue は「確定」のみを前提にでき、「未観測・仮説」は使う前に再検証する。
 
@@ -159,3 +159,120 @@ MB 級の巨大行は常設フィクスチャに置かず、テスト内で生�
 ### 匿名化
 
 - [x] `SPEC-CODEX-040` フィクスチャに実ユーザー名・実プロジェクト名・ホームディレクトリ実パスを含む文字列が無い（機械検査）
+
+---
+
+# 会話正規化（Issue #29）
+
+Codex rollout を既存 DTO（`IndexRecord` / `MessageBody`）へ正規化し、viewer 無変更でチャット表示を成立させる。usage（`token_count`）は #30 まで読み捨てる。
+
+## #29 での追加実測（2026-08-09・21 ファイル）
+
+#17 で「#29 で検証」と先送りした契約を実ログで確定した。
+
+| 検証項目 | 実測 | 確定した契約 |
+|---|---|---|
+| assistant の event↔item 対応 | 330:330・出現順 1:1・本文完全一致 330/330・event が常に先行 | `response_item` を正本とし `event_msg:agent_message` を捨てる |
+| user の event↔item 順序 | 本文一致 150 組すべてで event が item の**後** | ペアリング判定はストリーミングで先読みが必要になるため**採用しない** |
+| `<realtime_delegation>` | event 側にも 33/33 で出現（他タグは event 側に 0） | 「event に対応が無い＝注入」は成立しない。注入判定は**本文先頭パターンのみ** |
+| 先頭パターン判定の網羅性 | 注入 77 件中 73 件を判別（タグ 71 + AGENTS.md 2）。残り 4 件はパターン無し | 判別できないものは**実ユーザー入力として表示**（安全側。実入力を隠さない） |
+| turn_context の位置 | モデルが要る item（assistant message / reasoning / tool call）の前に必ず先行。142/142・反例 0 | model は「直近の turn_context.model」を採用。turn_context 前は undefined |
+
+注入判定の先頭パターン（`INJECTION_PATTERNS`）: `<environment_context>` / `<recommended_plugins>` / `<skill>` / `<realtime_delegation>` の先頭タグ、および `# AGENTS.md instructions for ` 前置。
+
+## アーキテクチャ（正規化フックの差し込み）
+
+CORE.md（#28）で予告した「ソースごとの normalize の差し込み」を実装する。
+
+- `server/sources/types.ts` の `LogSource` に 2 フックを追加する:
+  - `createNormalizer(state?: unknown): RecordNormalizer` — 1 走査分のステートフルな正規化器。`RecordNormalizer` は `normalize(raw, location): IndexRecord | null` と `serialize(): unknown`（増分再開用の直列化可能な走査文脈）を持つ
+  - `normalizeBody(raw: unknown): MessageBody` — 本文表示の正規化（sessions ルートがソース別に呼ぶ）
+- Claude ソースは既存 `normalizeRecord` / `normalizeBody` の薄いラッパ（ステートレス・`serialize()` は undefined）。**レコード列・キャッシュ内容は従来と一致**させる
+- `buildIndex` / `scanFile` は normalizer を受け取る（省略時は Claude 相当で後方互換）。キャッシュ（`IndexCacheFile`）に `scanState` を追加し、増分時は `createNormalizer(cache.scanState)` で文脈を復元する。`INDEX_SCHEMA_VERSION` を 4 へ繰り上げる（scanState の無い旧キャッシュを全再構築させる）
+- `Snapshot` に `sourcesById: Map<string, LogSource>` を追加し、sessions ルートは `SessionEntry.sourceId` から本文正規化をディスパッチする
+- `server/app.ts` の `AppOptions` に `codexSessionsDir?: string` を追加し、**指定されたときだけ** Codex ソースを登録する（既存テストが実 `~/.codex` に触れないため）。`server/index.ts` は `~/.codex/sessions` を渡す
+- Codex 固有の解釈は `server/sources/codex-normalize.ts` に閉じ込める（DTO へソース固有フィールドを生やさない）
+
+## 走査文脈（CodexScanState・直列化してキャッシュへ保存）
+
+| フィールド | 由来 | 用途 |
+|---|---|---|
+| `sessionId` | `session_meta.payload.id` | 後続レコードの sessionId |
+| `cwd` | `session_meta.payload.cwd` / `turn_context.cwd` | 後続レコードの cwd |
+| `version` | `session_meta.payload.cli_version` | 後続レコードの version |
+| `model` | `turn_context.model` | assistant 系レコードの model |
+| `turnStartedAt` | `task_started` 行の timestamp | task_complete の durationMs 算出 |
+| `toolCallIds` | `function_call` 等の call_id 蓄積 | `*_end` の重複判定（結ばれるものを捨てる） |
+
+## 正規化対応表（rollout 行 → IndexRecord）
+
+全レコード共通: `timestamp` は top-level timestamp、`sessionId` / `cwd` / `version` は走査文脈から埋める。usage は付けない（#30）。
+
+| 入力（type / payload.type） | 出力 |
+|---|---|
+| `session_meta` / `turn_context` / `world_state` / `thread_settings_applied` | レコード無し（文脈更新のみ） |
+| `response_item` message（assistant） | kind `assistant`・model=文脈・preview=本文冒頭 |
+| `response_item` message（user・実入力） | kind `user`・preview=本文冒頭 |
+| `response_item` message（user・先頭が注入パターン） | kind `attachment`・attachmentType=`injected` |
+| `response_item` message（developer） | kind `attachment`・attachmentType=`developer` |
+| `response_item` reasoning | kind `assistant`・hasThinking=true・model=文脈・preview=summary 冒頭 |
+| `response_item` function_call / custom_tool_call / tool_search_call | kind `assistant`・model=文脈・toolUses=[{id: call_id, name}]・preview=名前と引数冒頭 |
+| `response_item` function_call_output / custom_tool_call_output / tool_search_output | kind `user`・isToolResult=true・toolResultFor=call_id・preview=出力冒頭 |
+| `event_msg` agent_message / agent_reasoning / user_message | レコード無し（response_item の複製・注入通知） |
+| `event_msg` token_count | レコード無し（#30 で扱う） |
+| `event_msg` task_started | レコード無し（文脈更新のみ） |
+| `event_msg` task_complete | kind `system`・subtype=`task_complete`・durationMs=task_started との差（欠損時は undefined） |
+| `event_msg` error | kind `system`・subtype=`error`・preview=メッセージ |
+| `event_msg` `*_end`（call_id が toolCallIds に有る） | レコード無し（正本の output と重複） |
+| `event_msg` `*_end`（call_id が結ばれない） | kind `user`・isToolResult=true・toolResultFor=call_id（独立ツール結果として表示） |
+| 未知 top-level type / 未知 payload.type | kind `unknown`（捨てない。前方互換） |
+
+viewer 側は無変更で成立する（実装済みの規約に乗る）: attachment / unknown は `web/src/lib/thread.ts` の `HIDDEN_KINDS` でメイン列に出ず、tool_use と tool_result は `toolUses[].id` ↔ `toolResultFor` で取り付き、system は subtype=compact_boundary か durationMs 有りのみ表示される。やりとり分割（`exchanges.ts`）は kind user のみ開始点になるため、注入を attachment にすることで汚れない。
+
+**カウント意味論（合意済み）**: Codex は reasoning・ツール呼び出しが独立行のため assistantCount / models[].messages は「行単位」で Claude より大きく出る。#31 で見直し可。
+
+## 本文正規化（normalizeBody・Codex）
+
+| 入力 | MessageBody |
+|---|---|
+| message | role をそのまま、content の input_text / output_text → text ブロック、input_image → other ブロック（`[画像]`）、未知 part → other |
+| reasoning | summary[].text → thinking ブロック |
+| function_call / custom_tool_call / tool_search_call | tool_use ブロック（id=call_id・name・input=arguments。JSON 文字列なら parse、失敗時は生文字列） |
+| `*_output` | tool_result ブロック（toolUseId=call_id・text=output） |
+| `*_end`（独立表示分） | tool_result ブロック（取れるフィールドだけ整形。exec は exit_code≠0 を isError） |
+| error / その他 | text ブロック（取れるものだけ） |
+
+## 受け入れ基準（#29）
+
+### 正規化（レコード）
+
+- [x] `SPEC-CODEX-050` response_item の assistant message は kind assistant になり直近の turn_context.model が付く
+- [x] `SPEC-CODEX-051` turn_context 出現前の assistant 系レコードは model が undefined のまま例外を投げない
+- [x] `SPEC-CODEX-052` response_item の実ユーザー入力は kind user になり isToolResult が付かない
+- [x] `SPEC-CODEX-053` 本文先頭が既知注入パターンの user message と developer message は kind attachment になる
+- [x] `SPEC-CODEX-054` 既知パターンに合わない user message は kind user のまま残る（安全側）
+- [x] `SPEC-CODEX-055` reasoning は kind assistant・hasThinking=true になる
+- [x] `SPEC-CODEX-056` function_call / custom_tool_call / tool_search_call は kind assistant になり toolUses に call_id と name を持つ
+- [x] `SPEC-CODEX-057` function_call_output / custom_tool_call_output / tool_search_output は kind user・isToolResult=true・toolResultFor=call_id になる
+- [x] `SPEC-CODEX-058` event_msg の agent_message / agent_reasoning / user_message / token_count はレコードを生成しない
+- [x] `SPEC-CODEX-059` call_id が正本と結ばれる *_end はレコードを生成せず、結ばれない *_end は kind user・isToolResult の独立レコードになる
+- [x] `SPEC-CODEX-060` session_meta / turn_context / world_state / thread_settings_applied はレコードを生成せず、sessionId・cwd・version が後続レコードへ引き継がれる
+- [x] `SPEC-CODEX-061` task_complete は kind system になり task_started からの durationMs を持つ（timestamp 欠損時は durationMs 無しで生成する）
+- [x] `SPEC-CODEX-062` 壊れた JSON 行・未知 type・output の無い call・巨大行を含むファイルでも正規化は例外を投げず、未知 type は kind unknown で残る
+
+### 本文（normalizeBody）
+
+- [x] `SPEC-CODEX-063` message の content が text ブロックへ、input_image が other ブロックへ変換される
+- [x] `SPEC-CODEX-064` reasoning の summary が thinking ブロックへ変換される
+- [x] `SPEC-CODEX-065` ツール呼び出しは tool_use ブロック（id=call_id・name・input）へ、output は tool_result ブロック（toolUseId=call_id）へ変換される
+
+### 増分・キャッシュ
+
+- [x] `SPEC-CODEX-066` 走査文脈がキャッシュへ保存され、増分再開でも全再構築と同一のレコード列になる
+- [x] `SPEC-CODEX-067` INDEX_SCHEMA_VERSION の繰り上げにより scanState の無い旧キャッシュは全再構築される
+
+### 統合（viewer 無変更でのチャット成立）
+
+- [x] `SPEC-CODEX-068` codexSessionsDir 指定時のみ Codex ソースが登録され、GET /api/sessions/:id/messages で Codex セッションの本文が返る
+- [x] `SPEC-CODEX-069` Codex 正規化レコードは既存の行構築（buildRows）で user / assistant / ツール呼び出し＋結果がメイン列に成立し、注入・developer はメイン列に出ない
+- [x] `SPEC-CODEX-070` Claude ソースの正規化結果・API レスポンスは従来と一致する（既存テスト不変）

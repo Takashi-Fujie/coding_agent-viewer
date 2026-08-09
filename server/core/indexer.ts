@@ -11,6 +11,7 @@ import { scanFile } from './scan.js';
 import { addToSummary, createSummary } from './summary.js';
 import { INDEX_SCHEMA_VERSION } from './types.js';
 import type { IndexCacheFile, SessionIndex } from './types.js';
+import type { LogSource } from '../sources/types.js';
 
 export { INDEX_SCHEMA_VERSION };
 
@@ -18,6 +19,8 @@ export type IndexStrategy = 'reuse' | 'incremental' | 'rebuild';
 
 export interface BuildOptions {
   cacheDir: string;
+  /** セッションを発見したソース。省略時は Claude 相当のステートレス正規化（後方互換）。 */
+  source?: LogSource | undefined;
 }
 
 export interface BuildResult {
@@ -92,6 +95,7 @@ export async function buildIndex(filePath: string, options: BuildOptions): Promi
       fileSize: cache.fileSize,
       mtimeMs: cache.mtimeMs,
       lastOffset: cache.lastOffset,
+      scanState: cache.scanState,
       records: cache.records,
       summary: cache.summary,
     };
@@ -99,7 +103,11 @@ export async function buildIndex(filePath: string, options: BuildOptions): Promi
   }
 
   const resumeFrom = strategy === 'incremental' && cache ? cache.lastOffset : 0;
-  const scan = await scanFile(filePath, resumeFrom);
+  // 増分再開では保存済みの走査文脈を復元する（全再構築なら初期状態から）。
+  const normalizer = options.source?.createNormalizer(
+    strategy === 'incremental' && cache ? cache.scanState : undefined,
+  );
+  const scan = await scanFile(filePath, resumeFrom, { normalizer });
 
   const isIncremental = strategy === 'incremental' && cache !== null;
   const records = isIncremental ? [...cache.records, ...scan.records] : scan.records;
@@ -112,6 +120,7 @@ export async function buildIndex(filePath: string, options: BuildOptions): Promi
     fileSize: stats.size,
     mtimeMs: stats.mtimeMs,
     lastOffset: scan.lastOffset,
+    scanState: normalizer?.serialize(),
     records,
     summary,
   };

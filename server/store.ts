@@ -31,6 +31,8 @@ export interface ProjectEntry {
 export interface Snapshot {
   projects: ProjectEntry[];
   sessionsById: Map<string, SessionEntry>;
+  /** SessionEntry.sourceId からソースを引く（本文正規化のディスパッチ用）。 */
+  sourcesById: Map<string, LogSource>;
 }
 
 export interface StoreOptions {
@@ -47,12 +49,14 @@ export interface StoreOptions {
 export async function loadSnapshot(options: StoreOptions): Promise<Snapshot> {
   const projects: ProjectEntry[] = [];
   const sessionsById = new Map<string, SessionEntry>();
+  const sourcesById = new Map<string, LogSource>();
 
   for (const source of options.sources) {
+    sourcesById.set(source.id, source);
     for (const group of await source.discoverGroups()) {
       const sessions: SessionEntry[] = [];
       for (const discovered of group.sessions) {
-        const { index } = await buildIndex(discovered.filePath, { cacheDir: options.cacheDir });
+        const { index } = await buildIndex(discovered.filePath, { cacheDir: options.cacheDir, source });
         const entry: SessionEntry = {
           id: discovered.sessionId,
           projectId: group.groupId,
@@ -67,5 +71,5 @@ export async function loadSnapshot(options: StoreOptions): Promise<Snapshot> {
     }
   }
 
-  return { projects, sessionsById };
+  return { projects, sessionsById, sourcesById };
 }

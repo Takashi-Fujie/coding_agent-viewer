@@ -8,6 +8,7 @@
  */
 import { readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { normalizeBody, normalizeRecord } from '../core/normalize.js';
 import type { DiscoveredGroup, LogSource } from './types.js';
 
 export interface ClaudeSourceOptions {
@@ -45,5 +46,14 @@ export function createClaudeSource(options: ClaudeSourceOptions): LogSource {
       }
       return groups;
     },
+    // Claude の正規化は行単位で完結する（走査文脈なし）。従来の normalizeRecord の
+    // 薄いラッパで、レコード列・キャッシュ内容は source 省略時と一致する（SPEC-CODEX-070）。
+    createNormalizer() {
+      return {
+        normalize: (raw, location) => normalizeRecord(raw, location),
+        serialize: () => undefined,
+      };
+    },
+    normalizeBody,
   };
 }

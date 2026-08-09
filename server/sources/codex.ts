@@ -6,12 +6,12 @@
  * `session_index.jsonl` は読まない（rollout ファイル単独で発見が成立する。
  * インデックスが欠けた・壊れた環境でもセッションを取りこぼさないため）。
  * ファイル名の timestamp / UUID は解釈しない（パースが必要になるのは #29 以降）。
- *
- * 注意: #28 の時点ではアプリ構成（server/app.ts）に登録しない。正規化（#29）の無い
- * 状態で登録すると全行 unknown の壊れたセッションが集計へ漏れる。
+ * 正規化は codex-normalize.ts（Issue #29）。アプリへの登録は codexSessionsDir
+ * 指定時のみ（server/app.ts）。
  */
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
+import { createCodexNormalizer, normalizeCodexBody } from './codex-normalize.js';
 import type { DiscoveredGroup, LogSource } from './types.js';
 
 export interface CodexSourceOptions {
@@ -56,5 +56,7 @@ export function createCodexSource(options: CodexSourceOptions): LogSource {
       }
       return groups;
     },
+    createNormalizer: createCodexNormalizer,
+    normalizeBody: normalizeCodexBody,
   };
 }
