@@ -1,0 +1,161 @@
+# SPEC-CODEX — Codex ログのスキーマ調査と合成フィクスチャ（詳細設計書）
+
+担当 Issue: #17。人間向けの基本仕様書は [docs/spec/CODEX.md](../spec/CODEX.md)。後続: #28（ソース抽象化）→ #29（会話正規化）→ #30（usage 会計）→ #31（UI 統合）。
+
+rollout JSONL には公開された安定スキーマ契約が無い。この文書の契約はすべて**下記の観測条件における実測**であり、「確定」は観測範囲で反例が無かったことを、「未観測・仮説」は観測に現れなかったことを意味する。後続 Issue は「確定」のみを前提にでき、「未観測・仮説」は使う前に再検証する。
+
+## 観測条件
+
+| 項目 | 値 |
+|---|---|
+| 観測日 | 2026-08-08 |
+| 観測した cli_version | 0.128.0 / 0.146.0-alpha.3 / 0.146.0-alpha.3.1 / 0.146.0-alpha.9.2 / 0.147.0-alpha.1.2 / 0.147.0 |
+| 対象 | 19 ファイル / 28 MB / 4,100 行 |
+| 最大行 | 2,543,311 bytes（約 2.5 MB） |
+| 壊れた JSON 行 | 0（耐性検証は合成フィクスチャでのみ可能） |
+| session_meta.source | cli 1 / exec 5 / vscode 59 |
+| 観測モデル（turn_context.model） | gpt-5.5 / gpt-5.4-mini / gpt-5.3-codex / gpt-5-codex / gpt-5.1-codex / o3 / gpt-5.6-sol / gpt-5.6-terra |
+
+## 保存領域（セッション発見に必要な範囲のみ調査）
+
+- 正本: `~/.codex/sessions/YYYY/MM/DD/rollout-<ISO日時（ハイフン区切り）>-<UUIDv7>.jsonl`。拡張子は `.jsonl` のみで**圧縮ファイルは無い**。`archived_sessions` ディレクトリは存在しない
+- `~/.codex/session_index.jsonl`: `{id, thread_name, updated_at}` の追記型インデックス。thread_name は個人データを含むためフィクスチャ・文書には転記しない
+- `~/.codex/history.jsonl`: `{session_id, ts, text}`。ユーザー入力履歴であり本 PJ の解析対象にしない
+- 認証情報・設定など機微な領域は調査対象外（基本仕様書の約束）
+
+## 行の分類表
+
+top-level は全行 `{timestamp, type, payload}`。timestamp は ISO 8601 UTC（ミリ秒）。
+
+### top-level type（観測 5 種）
+
+| type | 件数 | 分類 | 要点 |
+|---|---|---|---|
+| `session_meta` | 65 | メタ | `payload`: id / timestamp / cwd / originator / cli_version / source / model_provider / base_instructions。**resume のたびに同一 id で再追記される**（1 ファイル最大 25 回を観測）。「ファイル先頭に 1 回だけ」を前提にしない |
+| `turn_context` | 132 | メタ | ターンごとに 1 行。model / cwd / approval_policy / sandbox_policy / collaboration_mode / truncation_policy 等。**モデル名はこの行から採る** |
+| `response_item` | 2,038 | 会話の正本 | payload.type: message / reasoning / function_call / function_call_output / custom_tool_call / custom_tool_call_output / tool_search_call / tool_search_output |
+| `event_msg` | 1,833 | イベント通知 + usage | payload.type: token_count / agent_message / user_message / task_started / task_complete / agent_reasoning / 各種 `*_end` / thread_settings_applied / error |
+| `world_state` | 32 | メタ（無視候補） | AGENTS.md 本文・環境情報のスナップショット。会話・usage には関与しない |
+
+### payload.type の分類（観測 20 種）
+
+| payload.type（top-level） | 件数 | 分類 |
+|---|---|---|
+| `token_count`（event_msg） | 613 | **usage**（`info` に累積値、`rate_limits` は usage 会計から分離） |
+| `message`（response_item） | 536 | **会話の正本**（role: user 175 / assistant 298 / developer 63） |
+| `reasoning`（response_item） | 472 | 会話の正本（summary + encrypted_content。encrypted_content は表示不可） |
+| `function_call` / `function_call_output`（response_item） | 283 / 283 | 会話の正本（ツール呼び出し） |
+| `custom_tool_call` / `custom_tool_call_output`（response_item） | 229 / 229 | 会話の正本（ツール呼び出し） |
+| `tool_search_call` / `tool_search_output`（response_item） | 3 / 3 | 会話の正本（ツール検索） |
+| `agent_message`（event_msg） | 298 | 通知（assistant message の複製 → 捨てる） |
+| `user_message`（event_msg） | 138 | 通知（実ユーザー入力のみ。注入は含まれない） |
+| `task_started` / `task_complete`（event_msg） | 132 / 132 | ターン境界 |
+| `agent_reasoning`（event_msg） | 87 | 通知（reasoning と 1:1 でない → 捨てる） |
+| `exec_command_end` / `patch_apply_end` / `mcp_tool_call_end` / `web_search_end`（event_msg） | 113 / 66 / 131 / 48 | 通知（実行結果詳細。call_id 対応は下記） |
+| `thread_settings_applied`（event_msg） | 73 | メタ（設定変更。適用開始位置の契約は #29 で検証） |
+| `error`（event_msg） | 2 | イベント（エラー表示に使う） |
+
+**未知 type の扱い**: 上記に無い top-level type / payload.type / 既知 type への未知フィールドは、捨てずに unknown 分類で保持する（SPEC-CORE-023 と同じ方針。前方互換）。
+
+## ターン境界・順序・相関キー
+
+- ターンは `task_started`（turn_id 付き）〜 `task_complete`。**complete の無い途中終了があり得る**前提で扱う
+- `turn_context` はターンごとに 1 行（観測: task_started と同数の 132）。モデル・実行設定の有効期間は次の turn_context まで
+- **並び順の正本はファイル順（追記順）とする。** top-level timestamp は補助情報（resume 時に payload 内 timestamp と食い違う例を観測）
+- 相関キー: ツール呼び出しは `call_id`、ターンは `turn_id`、response_item の `id` は OpenAI レスポンス ID（欠落あり）
+
+## 重複の対応表（event_msg ↔ response_item）
+
+| 論理メッセージ | 正本として採用 | 捨てる側 | 実測 |
+|---|---|---|---|
+| assistant 発言 | `response_item` message（role=assistant、phase: commentary 170 / final_answer 128） | `event_msg` agent_message | 全 19 ファイルで件数完全一致（298:298）。ただし件数一致のみの確認であり、**対応キー・本文一致・片側欠落時の優先規則は #29 で検証**（仮説: 出現順で 1:1） |
+| ユーザー発言 | `response_item` message（role=user） | `event_msg` user_message | **1:1 でない**（175 vs 138）。差分は自動注入: `<environment_context>` / `<recommended_plugins>` / `<skill>` / `<realtime_delegation>` のタグ付き注入と、`# AGENTS.md instructions for <パス>` 形式のタグ無し注入。注入判定は「event_msg 側に対応が無い user message」+ 既知パターンで行う（#29） |
+| developer 指示 | `response_item` message（role=developer、63 件） | （event_msg 側に無し） | 表示上は注入扱い（実ユーザー入力と区別する） |
+| reasoning | `response_item` reasoning | `event_msg` agent_reasoning | **1:1 でない**（472 vs 87）。agent_reasoning は summary 単位の通知に過ぎない |
+
+user content はテキストのみでなく画像（`input_image` 等の content part）があり得る。content は配列で複数 part を持つ。
+
+## ツール呼び出しの対応表
+
+| 対応 | 実測 | 契約 |
+|---|---|---|
+| `function_call` ↔ `function_call_output`（call_id） | 283 件全件で一致・孤児 0 | call_id で結合。**output の無い call（途中終了）はあり得る**前提で扱う（観測 0 だがフィクスチャで担保） |
+| `custom_tool_call` ↔ `custom_tool_call_output`（call_id） | 全件一致・孤児 0 | 同上 |
+| `exec_command_end` → response_item 側 call | 113/113 が call_id 一致 | 実行詳細（stdout/exit_code/duration）の付加情報として結合 |
+| `mcp_tool_call_end` → response_item 側 call | **101/131**（30 件はイベント専用） | call_id で結合**できない行がある**。結合失敗は独立イベントとして扱い、二重表示も欠落もさせない |
+| `patch_apply_end` → response_item 側 call | **29/66** | 同上 |
+| `web_search_end` → response_item 側 call | **34/48** | 同上 |
+| `function_call` と `custom_tool_call` の統合 | — | 正規化では同一の「ツール呼び出し」として統合し、種別をフィールドで保持する（#29） |
+
+## token_count（usage）の契約
+
+`event_msg:token_count` の `payload.info` が usage。`info: null` の行が存在する（観測 1 件）。`payload.rate_limits` は usage ではなく**会計から分離**する。
+
+### 確定（観測範囲で反例 0）
+
+| 契約 | 実測根拠 |
+|---|---|
+| `cached_input_tokens` は `input_tokens` の**内数** | 612 検査で反例 0 |
+| `reasoning_output_tokens` は `output_tokens` の**内数** | 同上 |
+| `total_tokens = input_tokens + output_tokens` | 同上 |
+| `total_token_usage` はセッション累積・単調増加 | ファイル内リセット 0 |
+| 累積が増加する遷移では増分 = `last_token_usage.total_tokens` | 581/581 遷移で一致 |
+| **同一累積値の重複記録がある**（last は非 0 のまま） | 25 遷移。**行ごとの last 合算は二重計上になる** → usage は「累積値の増分」で確定させる |
+| `token_count` は 1 ターンに複数回出る | 1 ターン 0〜86 回（0 回のターンも 4 件） |
+| resume（session_meta 再追記）後も累積は継続 | multi-meta 2 ファイルでリセット 0 |
+| モデル切替でもリセットしない | 切替 1 ファイルでリセット 0。**モデル別会計は「増分発生時点の turn_context.model」に帰属させる必要がある**（#30） |
+
+### 未観測・仮説（後続 Issue で使う前に再検証）
+
+- compaction 時の累積リセット有無（compaction 系の payload.type 自体が未観測）
+- cache **write** 系フィールドの有無（観測フィールドは input / cached_input / output / reasoning_output / total のみ。Anthropic の cache_creation に相当する概念は現れていない）
+- `last_token_usage` の厳密な意味（「直近 API 応答」説が濃厚だが、ストリーミング中の途中値かは未確定）
+- 途中終了ターンの usage が累積に反映されるか
+
+## 合成フィクスチャ設計
+
+`tests/fixtures/codex/` に置く。実ログの切り貼りは禁止。パスは `/home/user/synthetic-project`、本文は `<synthetic>` を含む定型文、UUID は `00000000-` 始まりの合成値を使う。
+
+| ファイル | 含めるケース |
+|---|---|
+| `rollout-basic.jsonl` | 通常セッション: session_meta / world_state / turn_context / 注入 user message（タグ付き + AGENTS.md 形タグ無し）/ 実 user message / developer message / 画像 content / reasoning / function_call+output / custom_tool_call+output / 各種 `*_end`（call_id 一致とイベント専用の両方）/ 1 ターン複数 token_count / 同一累積値の重複記録 / task_started・task_complete |
+| `rollout-resume-switch.jsonl` | 同一 id の session_meta 複数追記（resume）/ resume 後の累積継続 / モデル切替（切替後もリセットなし）/ info: null の token_count / complete の無い途中終了ターン |
+| `rollout-edge.jsonl` | 壊れた JSON 行 / 未知 top-level type / 未知 payload.type / 既知 type への未知フィールド / 未知モデル / 巨大行（50KB+）/ output の無い function_call / 改行の無い不完全な末尾行 |
+
+MB 級の巨大行は常設フィクスチャに置かず、テスト内で生成して検証する（リポジトリ肥大の回避）。
+
+フィクスチャのファイル名は簡略形（`rollout-basic.jsonl` 等）であり、実ログの `rollout-<ISO日時>-<UUIDv7>.jsonl` 命名には従っていない。#28 でファイル名から timestamp / uuid を抽出する場合は、実命名規約に従うフィクスチャを追加すること。
+
+## 受け入れ基準
+
+検証はフィクスチャ検証テスト（vitest）で行う。この Issue に production コードは無いため、テストは「フィクスチャが本文書の契約どおりの形をしている」ことを機械的に担保する（後続 Issue の TDD がこのフィクスチャに依存する）。
+
+### スキーマ契約の文書化
+
+- [x] `SPEC-CODEX-001` 行の分類表・重複対応表・ツール対応表・token_count 契約が本文書に実測値付きで記録されている（確定と未観測・仮説を区別する）
+
+### フィクスチャ: 基本形
+
+- [x] `SPEC-CODEX-010` 全行が `{timestamp, type, payload}` 形式で、観測 5 種の top-level type をすべて含む
+- [x] `SPEC-CODEX-011` token_count が確定契約（cached ⊆ input・reasoning ⊆ output・total = input + output・累積単調増加・増加遷移の増分 = last）を満たす
+- [x] `SPEC-CODEX-012` 1 ターンに複数の token_count を含むターンと、同一累積値の重複記録を含む
+- [x] `SPEC-CODEX-013` `info: null` の token_count 行を含む
+- [x] `SPEC-CODEX-014` タグ付き注入・AGENTS.md 形タグ無し注入・developer message・画像 content を含み、event_msg:user_message と response_item の user message が 1:1 にならない
+- [x] `SPEC-CODEX-015` assistant 発言は event_msg:agent_message と response_item(assistant message) の件数が一致し、phase（commentary / final_answer）の両方を含む
+- [x] `SPEC-CODEX-016` call_id で結合できるツール呼び出し（function_call / custom_tool_call）と、response_item 側に対応の無いイベント専用 `*_end` の両方を含む
+
+### フィクスチャ: resume・切替・途中終了
+
+- [x] `SPEC-CODEX-020` 同一セッション id の session_meta が複数回追記され、resume 後も token_count の累積が継続する
+- [x] `SPEC-CODEX-021` turn_context のモデルが途中で切り替わり、切替後も累積がリセットされない
+- [x] `SPEC-CODEX-022` task_started に対応する task_complete の無い途中終了ターンを含む
+
+### フィクスチャ: 耐性
+
+- [x] `SPEC-CODEX-030` 壊れた JSON 行・未知 top-level type・未知 payload.type・既知 type への未知フィールド・未知モデルを含む
+- [x] `SPEC-CODEX-031` 50KB を超える巨大行と、改行の無い不完全な末尾行を含む
+- [x] `SPEC-CODEX-032` output の無い function_call（途中終了）を含む
+
+### 匿名化
+
+- [x] `SPEC-CODEX-040` フィクスチャに実ユーザー名・実プロジェクト名・ホームディレクトリ実パスを含む文字列が無い（機械検査）

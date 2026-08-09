@@ -28,6 +28,7 @@
 | `SPEC-DASH` | ダッシュボード（Overview / プロジェクト / Tools & Agents） |
 | `SPEC-LIVE` | ファイル監視とライブ更新 |
 | `SPEC-CONFIG` | agents / skills / plugins / settings の可視化 |
+| `SPEC-CODEX` | Codex CLI ログ対応（スキーマ調査・正規化・usage 会計・UI 統合） |
 
 ## 受け入れ基準の書き方
 
