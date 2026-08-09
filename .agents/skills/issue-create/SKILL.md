@@ -20,7 +20,7 @@ git switch main && git pull --ff-only
 ### 2. 対象 Issue を確定する
 
 - **backlog にある場合**（`gh issue list` で確認）: その Issue を使う。内容が古ければ `gh issue edit` で更新する。
-- **新規の場合**: 対象領域とやりたいことをユーザーと確認し、合意してから作成する:
+- **新規の場合**: 先にタイトルと本文の案を作成してユーザーに提示し、**確認の返答を得てから登録する**。確認前に `gh issue create` を実行しない:
 
 ```bash
 gh issue create --title "SPEC-<領域>: <要約>" --body "$(cat <<'EOF'
