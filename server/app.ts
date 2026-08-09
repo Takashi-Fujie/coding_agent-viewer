@@ -15,6 +15,7 @@ import type { ApiContext } from './http.js';
 import { createLiveHub } from './live.js';
 import type { LiveHub } from './live.js';
 import { loadSnapshot } from './store.js';
+import { createClaudeSource } from './sources/claude.js';
 import { configRoutes } from './routes/config.js';
 import { liveRoutes } from './routes/live.js';
 import { overviewRoutes } from './routes/overview.js';
@@ -45,8 +46,11 @@ export const DEFAULT_WEB_DIST_DIR = fileURLToPath(new URL('../web/dist', import.
 
 export function createApp(options: AppOptions): Express {
   const loadTable = (): ReturnType<typeof loadPriceTable> => loadPriceTable(options.priceTablePath);
+  // #28 時点の登録ソースは Claude のみ。Codex ソースは正規化（#29）が入ってから登録する
+  // （正規化なしで登録すると全行 unknown の壊れたセッションが集計へ漏れる）。
+  const sources = [createClaudeSource({ logDir: options.logDir })];
   const ctx: ApiContext = {
-    load: () => loadSnapshot({ logDir: options.logDir, cacheDir: options.cacheDir }),
+    load: () => loadSnapshot({ sources, cacheDir: options.cacheDir }),
     loadTable,
     claudeDir: options.claudeDir,
     hub: options.hub ?? createLiveHub({ logDir: options.logDir, cacheDir: options.cacheDir, loadTable }),

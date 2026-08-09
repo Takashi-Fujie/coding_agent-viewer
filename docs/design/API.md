@@ -46,8 +46,7 @@ server/
 ### store（鮮度管理）
 
 - リクエスト時に `buildIndex()` を呼ぶ。キャッシュ戦略（reuse / incremental / rebuild）は SPEC-CORE の `decideStrategy` に委ねるため、追加の TTL は設けない（stat のコストのみで最新が得られる）
-- プロジェクト = `~/.claude/projects/` 直下のディレクトリ。project id はディレクトリ名そのまま
-- セッション = プロジェクト配下（再帰）の `*.jsonl`。session id はファイル名から拡張子を除いたもの。id → filePath の対応は走査時に構築する
+- セッションの発見と ID の付与はログソース抽象（`server/sources/`・Issue #28）に委ね、store は配置規約を知らない。Claude ソースの規約（プロジェクト = `~/.claude/projects/` 直下のディレクトリ、セッション = 配下再帰の `*.jsonl`、id = 拡張子を除いたファイル名）は `server/sources/claude.ts` に定義がある。詳細は [CORE.md](CORE.md) の「ログソース抽象とセッション発見」
 
 ### 日次集計
 
