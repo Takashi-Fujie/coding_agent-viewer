@@ -56,6 +56,9 @@ export function createCodexSource(options: CodexSourceOptions): LogSource {
       }
       return groups;
     },
+    sessionIdFor(filePath: string): string | null {
+      return ROLLOUT_FILE.test(basename(filePath)) ? `codex:${basename(filePath, '.jsonl')}` : null;
+    },
     createNormalizer: createCodexNormalizer,
     normalizeBody: normalizeCodexBody,
   };

@@ -25,6 +25,8 @@ export interface SessionEntry {
 export interface ProjectEntry {
   /** グループ ID（claude は ~/.claude/projects 直下のディレクトリ名）。API の project id。 */
   id: string;
+  /** グループを発見したソース（1 グループ 1 ソース。ソースをまたぐ併合はしない）。 */
+  sourceId: string;
   sessions: SessionEntry[];
 }
 
@@ -67,7 +69,7 @@ export async function loadSnapshot(options: StoreOptions): Promise<Snapshot> {
         sessions.push(entry);
         sessionsById.set(entry.id, entry);
       }
-      projects.push({ id: group.groupId, sessions });
+      projects.push({ id: group.groupId, sourceId: source.id, sessions });
     }
   }
 

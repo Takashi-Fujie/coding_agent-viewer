@@ -11,6 +11,7 @@ import { ComboChart } from '../components/ComboChart';
 import { Donut } from '../components/Donut';
 import { SearchPanel } from '../components/SearchPanel';
 import { assignModelColors } from '../lib/colors';
+import { SourceBadge, SourceSwitch, useSourceFilter } from '../lib/source';
 import { PRESETS } from '../lib/dates';
 import type { PresetKey } from '../lib/dates';
 import { formatTokens, formatUsd } from '../lib/format';
@@ -57,6 +58,7 @@ function sortProjects(projects: ProjectListItem[], sort: SortKey): ProjectListIt
 }
 
 export function OverviewView() {
+  const { source } = useSourceFilter();
   const [preset, setPreset] = useState<PresetKey>('7d');
   const [data, setData] = useState<OverviewResponse | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -70,7 +72,7 @@ export function OverviewView() {
     let alive = true;
     setSelectedDay(null);
     setDayProjects(undefined);
-    api.overview(presetQuery(preset)).then(
+    api.overview({ ...presetQuery(preset), ...(source !== undefined ? { source } : {}) }).then(
       (res) => {
         if (alive) setData(res);
       },
@@ -81,7 +83,7 @@ export function OverviewView() {
     return () => {
       alive = false;
     };
-  }, [preset]);
+  }, [preset, source]);
 
   useEffect(() => {
     if (selectedDay === null) {
@@ -89,20 +91,23 @@ export function OverviewView() {
       return;
     }
     let alive = true;
-    api.overview({ from: selectedDay, to: selectedDay }).then(
-      (res) => {
-        if (alive) {
-          setDayProjects(res.projects.filter((p) => p.totalTokens > 0 || p.estimatedCost > 0));
-        }
-      },
-      (e: Error) => {
-        if (alive) setError(e.message);
-      },
-    );
+    api
+      .overview({ from: selectedDay, to: selectedDay, ...(source !== undefined ? { source } : {}) })
+      .then(
+        (res) => {
+          if (alive) {
+            // usage が構造的に 0 の Codex 行も、その日にレコードがあれば残す（SPEC-DASH-088）
+            setDayProjects(res.projects.filter((p) => p.records > 0));
+          }
+        },
+        (e: Error) => {
+          if (alive) setError(e.message);
+        },
+      );
     return () => {
       alive = false;
     };
-  }, [selectedDay]);
+  }, [selectedDay, source]);
 
   const modelColors = useMemo(() => {
     if (!data) return new Map<string, string>();
@@ -153,6 +158,7 @@ export function OverviewView() {
               </button>
             ))}
           </div>
+          <SourceSwitch />
           {selectedDay !== null && (
             <span className="chip on" data-testid="day-chip">
               <b>{selectedDay}</b>&nbsp;に活動したプロジェクト
@@ -295,13 +301,28 @@ export function OverviewView() {
                   }}
                 >
                   <td>
-                    <b>{basename(p.path) ?? p.id}</b>
+                    {/* Codex グループは cwd 末尾だと Claude と見分けが付かないため日付を主ラベルにする（SPEC-DASH-087） */}
+                    <b>{p.source === 'claude' ? (basename(p.path) ?? p.id) : p.id}</b>
+                    <SourceBadge source={p.source} />
                     {p.path !== null && <span className="pmeta mono">{p.path}</span>}
                   </td>
-                  <td className="num">{p.sessionCount}</td>
-                  <td className="num">{formatTokens(p.totalTokens)}</td>
                   <td className="num">
-                    <b>{formatUsd(p.estimatedCost)}</b>
+                    {p.sessionCount}
+                  </td>
+                  {/* Codex の usage は #30 まで未集計。0 円と断定しない（SPEC-DASH-089） */}
+                  <td className="num">
+                    {p.source !== 'claude' && p.totalTokens === 0 ? (
+                      <span className="est">未集計</span>
+                    ) : (
+                      formatTokens(p.totalTokens)
+                    )}
+                  </td>
+                  <td className="num">
+                    {p.source !== 'claude' && p.estimatedCost === 0 ? (
+                      <span className="est">未集計</span>
+                    ) : (
+                      <b>{formatUsd(p.estimatedCost)}</b>
+                    )}
                   </td>
                   <td>{formatWhen(p.lastTimestamp)}</td>
                 </tr>

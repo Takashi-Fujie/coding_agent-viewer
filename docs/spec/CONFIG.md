@@ -38,7 +38,7 @@
 
 - プロジェクト側（各リポジトリの `.claude/`）の定義スキャン。定義の正本が各リポジトリにあり、`~/.claude/` の走査では見えないため
 - 定義ファイル本文の編集機能（表示のみ）
-- Codex CLI の設定（Claude Code 分の完了後に対応）
+- Codex CLI の設定（`~/.codex/config.toml` 等）。Issue #31 のソース切替（SPEC-DASH 側）でも設定・定義画面は**対象外**とする — この画面は Claude Code の設定を表示する画面であり、source filter の切替は効かせない。Codex 設定の可視化は必要になったら別 Issue を起こす
 
 ## 表示上の約束
 

@@ -13,6 +13,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../server/app.js';
 import { createLiveHub } from '../../../server/live.js';
+import { createClaudeSource } from '../../../server/sources/claude.js';
 import type { LiveHub } from '../../../server/live.js';
 import { loadPriceTable } from '../../../server/cost.js';
 import { appendJsonl, assistantLine, writeJsonl } from '../../helpers/fixtures.js';
@@ -105,7 +106,7 @@ beforeAll(async () => {
   ]);
   await writeJsonl(sessionBPath, [assistantLine({ uuid: 'b-1' })]);
 
-  hub = createLiveHub({ logDir, cacheDir, loadTable: () => loadPriceTable(), debounceMs: 10 });
+  hub = createLiveHub({ roots: [{ source: createClaudeSource({ logDir }), dir: logDir }], cacheDir, loadTable: () => loadPriceTable(), debounceMs: 10 });
   const app = createApp({ logDir, cacheDir, claudeDir: join(root, 'claude'), hub });
   server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');

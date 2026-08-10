@@ -187,4 +187,10 @@ export interface SessionIndex {
 
 export interface IndexCacheFile extends SessionIndex {
   schemaVersion: number;
+  /**
+   * インデックスを書き込んだソース id（Issue #31・SPEC-LIVE-043）。
+   * 期待ソースと不一致なら再利用しない（別ソースのパーサで書かれた汚染キャッシュの自己修復）。
+   * フィールド導入前の旧キャッシュは未記載 = 'claude' とみなす。
+   */
+  source?: string;
 }

@@ -7,6 +7,7 @@ import { api, presetQuery } from '../api';
 import type { RangeQuery } from '../api';
 import { PRESETS } from '../lib/dates';
 import type { PresetKey } from '../lib/dates';
+import { SourceSwitch, useSourceFilter } from '../lib/source';
 import type {
   AgentStatsResponse,
   ConfigResponse,
@@ -27,6 +28,7 @@ function rate(failures: number, count: number): string {
 }
 
 export function ToolsView() {
+  const { source } = useSourceFilter();
   const [preset, setPreset] = useState<PresetKey>('30d');
   const [project, setProject] = useState<string>('');
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
@@ -40,6 +42,7 @@ export function ToolsView() {
     let alive = true;
     const params: RangeQuery = { ...presetQuery(preset) };
     if (project !== '') params.project = project;
+    if (source !== undefined) params.source = source;
     Promise.all([api.statsTools(params), api.statsAgents(params), api.statsHooks(params)]).then(
       ([t, a, h]) => {
         if (!alive) return;
@@ -54,7 +57,7 @@ export function ToolsView() {
     return () => {
       alive = false;
     };
-  }, [preset, project]);
+  }, [preset, project, source]);
 
   useEffect(() => {
     let alive = true;
@@ -114,6 +117,7 @@ export function ToolsView() {
               </button>
             ))}
           </div>
+          <SourceSwitch />
           <select
             aria-label="プロジェクトで絞り込み"
             value={project}

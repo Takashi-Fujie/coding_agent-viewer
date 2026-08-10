@@ -13,6 +13,7 @@ import type {
   SearchResponse,
   SessionDetail,
   SessionListItem,
+  SourcesResponse,
   ToolStatsResponse,
 } from './lib/types';
 import { localToday, presetRange, tzOffsetMinutes } from './lib/dates';
@@ -35,6 +36,7 @@ async function getJson<T>(url: string): Promise<T> {
 
 export interface ProjectDetail {
   id: string;
+  source: string;
   path: string | null;
   range: { from: string | null; to: string | null };
   daily: DailyModelRow[];
@@ -47,6 +49,8 @@ export interface RangeQuery {
   to?: string;
   project?: string;
   limit?: number;
+  /** ソース絞り込み（SPEC-DASH-081〜082）。未指定 = 全ソース。 */
+  source?: string;
 }
 
 function query(params: RangeQuery): string {
@@ -55,6 +59,7 @@ function query(params: RangeQuery): string {
   if (params.to !== undefined) search.set('to', params.to);
   if (params.project !== undefined) search.set('project', params.project);
   if (params.limit !== undefined) search.set('limit', String(params.limit));
+  if (params.source !== undefined) search.set('source', params.source);
   // 期間指定はローカル日付なので、常にブラウザの tz をサーバへ渡す
   search.set('tzOffset', String(tzOffsetMinutes()));
   return `?${search.toString()}`;
@@ -69,6 +74,7 @@ export const api = {
   overview: (params: RangeQuery = {}) =>
     getJson<OverviewResponse>(`/api/overview${query(params)}`),
   projects: () => getJson<ProjectListItem[]>('/api/projects'),
+  sources: () => getJson<SourcesResponse>('/api/sources'),
   project: (id: string, params: RangeQuery = {}) =>
     getJson<ProjectDetail>(`/api/projects/${encodeURIComponent(id)}${query(params)}`),
   session: (id: string) => getJson<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`),
@@ -82,6 +88,9 @@ export const api = {
     getJson<AgentStatsResponse>(`/api/stats/agents${query(params)}`),
   statsHooks: (params: RangeQuery = {}) =>
     getJson<HookStatsResponse>(`/api/stats/hooks${query(params)}`),
-  search: (q: string) => getJson<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`),
+  search: (q: string, source?: string) =>
+    getJson<SearchResponse>(
+      `/api/search?q=${encodeURIComponent(q)}${source !== undefined ? `&source=${encodeURIComponent(source)}` : ''}`,
+    ),
   config: () => getJson<ConfigResponse>('/api/config'),
 };

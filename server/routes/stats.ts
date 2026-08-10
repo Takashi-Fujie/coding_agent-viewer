@@ -8,7 +8,7 @@
  */
 import { Router } from 'express';
 import { filterByRange, modelDateRows } from '../aggregate.js';
-import { parseRange, parseTzOffset, queryInt, queryString, wrap } from '../http.js';
+import { parseRange, parseSource, parseTzOffset, projectsBySource, queryInt, queryString, wrap } from '../http.js';
 import type { ApiContext } from '../http.js';
 import type { Snapshot } from '../store.js';
 import type { IndexRecord } from '../core/types.js';
@@ -50,17 +50,24 @@ export interface HookEntry {
   sessionId: string;
 }
 
-/** 絞り込み条件。project は指定が無ければ全プロジェクト。 */
+/** 絞り込み条件。project / source は指定が無ければ全対象。 */
 interface StatsFilter {
   from: string | undefined;
   to: string | undefined;
   tzOffset: number;
   project: string | undefined;
+  source: string | undefined;
 }
 
-function parseFilter(query: Record<string, unknown>): StatsFilter {
+function parseFilter(query: Record<string, unknown>, snapshot: Snapshot): StatsFilter {
   const { from, to } = parseRange(query);
-  return { from, to, tzOffset: parseTzOffset(query), project: queryString(query['project']) };
+  return {
+    from,
+    to,
+    tzOffset: parseTzOffset(query),
+    project: queryString(query['project']),
+    source: parseSource(query, snapshot),
+  };
 }
 
 /** プロジェクト × セッションのレコードを絞り込み付きで列挙する。 */
@@ -68,7 +75,7 @@ function* sessionRecords(
   snapshot: Snapshot,
   filter: StatsFilter,
 ): Generator<{ project: string; sessionId: string; records: IndexRecord[] }> {
-  for (const project of snapshot.projects) {
+  for (const project of projectsBySource(snapshot, filter.source)) {
     if (filter.project !== undefined && project.id !== filter.project) continue;
     for (const session of project.sessions) {
       yield {
@@ -176,8 +183,9 @@ export function statsRoutes(ctx: ApiContext): Router {
       const { from, to } = parseRange(req.query);
       const tzOffset = parseTzOffset(req.query);
       const snapshot = await ctx.load();
+      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
       const records = filterByRange(
-        snapshot.projects.flatMap((p) => p.sessions.flatMap((s) => s.index.records)),
+        projects.flatMap((p) => p.sessions.flatMap((s) => s.index.records)),
         from,
         to,
         tzOffset,
@@ -189,8 +197,8 @@ export function statsRoutes(ctx: ApiContext): Router {
   router.get(
     '/api/stats/tools',
     wrap(async (req, res) => {
-      const filter = parseFilter(req.query);
       const snapshot = await ctx.load();
+      const filter = parseFilter(req.query, snapshot);
       res.json(toolStats(snapshot, filter));
     }),
   );
@@ -198,8 +206,8 @@ export function statsRoutes(ctx: ApiContext): Router {
   router.get(
     '/api/stats/agents',
     wrap(async (req, res) => {
-      const filter = parseFilter(req.query);
       const snapshot = await ctx.load();
+      const filter = parseFilter(req.query, snapshot);
       res.json({
         subagents: usageStats(snapshot, filter, (r) => (r.toolUses ?? []).map((t) => t.subagentType)),
         skills: usageStats(snapshot, filter, (r) => (r.toolUses ?? []).map((t) => t.skill)),
@@ -210,9 +218,9 @@ export function statsRoutes(ctx: ApiContext): Router {
   router.get(
     '/api/stats/hooks',
     wrap(async (req, res) => {
-      const filter = parseFilter(req.query);
       const limit = queryInt(req.query['limit'], DEFAULT_HOOK_LIMIT);
       const snapshot = await ctx.load();
+      const filter = parseFilter(req.query, snapshot);
 
       const hooks: HookEntry[] = [];
       for (const { project, sessionId, records } of sessionRecords(snapshot, filter)) {

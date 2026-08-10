@@ -122,6 +122,25 @@ body {
   color: var(--ink);
   border-color: var(--warning);
 }
+/* ソースバッジ（SPEC-DASH-087・Issue #31） */
+.badge.src {
+  margin-left: 6px;
+  font-size: 10px;
+}
+.badge.src-codex {
+  color: var(--ink);
+  border-color: var(--s2, var(--border));
+}
+
+/* ソース切替（SPEC-DASH-085〜086）。各画面の期間フィルタ横に置く（2026-08-09 合意） */
+.filterrow .srcswitch {
+  margin-left: 4px;
+}
+.filterrow .srcswitch button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ライブ状態（SPEC-LIVE-022） */
 .badge.live {
   color: var(--ok, #2e9e5b);

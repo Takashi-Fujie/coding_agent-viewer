@@ -48,6 +48,8 @@ const COST = {
 const PROJECTS = [
   {
     id: '-home-dev-newer',
+    source: 'claude',
+    records: 10,
     path: '/home/dev/newer',
     sessionCount: 3,
     totalTokens: 1000,
@@ -56,6 +58,8 @@ const PROJECTS = [
   },
   {
     id: '-home-dev-costly',
+    source: 'claude',
+    records: 5,
     path: '/home/dev/costly',
     sessionCount: 1,
     totalTokens: 9000,
@@ -64,6 +68,8 @@ const PROJECTS = [
   },
   {
     id: '-home-dev-memory-only',
+    source: 'claude',
+    records: 0,
     path: null,
     sessionCount: 0,
     totalTokens: 0,

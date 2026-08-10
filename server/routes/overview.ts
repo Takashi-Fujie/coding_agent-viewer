@@ -4,7 +4,7 @@
 import { Router } from 'express';
 import { dailyOverview, filterByRange, tokenTotals, tokensByModel } from '../aggregate.js';
 import { estimateRecordsCost } from '../cost.js';
-import { parseRange, parseTzOffset, wrap } from '../http.js';
+import { parseRange, parseSource, parseTzOffset, projectsBySource, wrap } from '../http.js';
 import type { ApiContext } from '../http.js';
 import type { ProjectEntry } from '../store.js';
 import type { PriceTable } from '../cost.js';
@@ -12,6 +12,8 @@ import type { IndexRecord } from '../core/types.js';
 
 export interface ProjectListItem {
   id: string;
+  /** グループを発見したソース id（SPEC-DASH-083）。UI のバッジ・行ラベル切替に使う。 */
+  source: string;
   /**
    * セッションの cwd 由来の実パス（SPEC-CHAT-004）。ディレクトリ名は `/` が `-` に
    * 変換された不可逆形式なので復号せず、ログの cwd を正とする。cwd が無ければ null。
@@ -20,6 +22,8 @@ export interface ProjectListItem {
   sessionCount: number;
   totalTokens: number;
   estimatedCost: number;
+  /** 範囲フィルタ後のレコード件数（SPEC-DASH-084）。usage 0 でも日別絞り込みで消さない基準。 */
+  records: number;
   lastTimestamp: string | null;
 }
 
@@ -55,10 +59,12 @@ export function projectListItem(
 
   return {
     id: project.id,
+    source: project.sourceId,
     path: projectPath(project),
     sessionCount: project.sessions.length,
     totalTokens: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreation,
     estimatedCost: estimateRecordsCost(filtered, table).total,
+    records: filtered.length,
     lastTimestamp,
   };
 }
@@ -72,13 +78,16 @@ export function overviewRoutes(ctx: ApiContext): Router {
       const { from, to } = parseRange(req.query);
       const tzOffset = parseTzOffset(req.query);
       const [snapshot, table] = await Promise.all([ctx.load(), ctx.loadTable()]);
+      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
 
-      const all = snapshot.projects.flatMap((p) => p.sessions.flatMap((s) => s.index.records));
+      const all = projects.flatMap((p) => p.sessions.flatMap((s) => s.index.records));
       const records = filterByRange(all, from, to, tzOffset);
       const inRange = (rs: IndexRecord[]): IndexRecord[] => filterByRange(rs, from, to, tzOffset);
 
+      let sessions = 0;
       let skippedLines = 0;
-      for (const project of snapshot.projects) {
+      for (const project of projects) {
+        sessions += project.sessions.length;
         for (const session of project.sessions) {
           skippedLines += session.index.summary.skippedLineCount;
         }
@@ -89,13 +98,13 @@ export function overviewRoutes(ctx: ApiContext): Router {
         totals: {
           tokens: tokenTotals(records),
           records: records.length,
-          sessions: snapshot.sessionsById.size,
+          sessions,
           skippedLines,
         },
         cost: estimateRecordsCost(records, table),
         byModel: tokensByModel(records),
         daily: dailyOverview(records, table, tzOffset),
-        projects: snapshot.projects.map((p) => projectListItem(p, table, inRange)),
+        projects: projects.map((p) => projectListItem(p, table, inRange)),
       });
     }),
   );

@@ -35,6 +35,7 @@ export function sessionRoutes(ctx: ApiContext): Router {
       res.json({
         id: session.id,
         projectId: session.projectId,
+        source: session.sourceId,
         summary: session.index.summary,
         cost: estimateRecordsCost(session.index.records, table),
         // assistant メタにはメッセージ単位の推定コストを付ける（SPEC-CHAT-040）。

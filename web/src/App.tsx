@@ -3,6 +3,9 @@
  * 仕様は docs/design/DASH.md。
  */
 import { useEffect, useState } from 'react';
+import { api } from './api';
+import { SourceFilterContext } from './lib/source';
+import type { SourceInfo } from './lib/types';
 import { parseRoute, routeHash } from './router';
 import { ConfigView } from './views/ConfigView';
 import { OverviewView } from './views/OverviewView';
@@ -12,6 +15,9 @@ import { SessionView } from './views/SessionView';
 
 export function App() {
   const [route, setRoute] = useState(() => parseRoute(location.hash));
+  // ソース切替（SPEC-DASH-085）。App の state なのでハッシュ遷移をまたいで保持される
+  const [source, setSource] = useState<string | undefined>(undefined);
+  const [sources, setSources] = useState<SourceInfo[]>([]);
 
   useEffect(() => {
     const onChange = () => setRoute(parseRoute(location.hash));
@@ -19,15 +25,30 @@ export function App() {
     return () => window.removeEventListener('hashchange', onChange);
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    api.sources().then(
+      (res) => {
+        // 形が想定と違う応答（旧サーバ等）では切替を出さないだけで画面は成立させる
+        if (alive) setSources(Array.isArray(res.sources) ? res.sources : []);
+      },
+      () => undefined, // 取得失敗時は切替を出さないだけで画面は成立させる
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // ドリルダウン画面（プロジェクト / セッション）では Overview 側をアクティブ表示にする
   const activeNav =
     route.view === 'tools' ? 'tools' : route.view === 'config' ? 'config' : 'overview';
 
   return (
+    <SourceFilterContext.Provider value={{ source, setSource, sources }}>
     <div className="app">
       <nav className="nav">
         <div className="brand">
-          agent-viewer<small>Claude Code ログビューア</small>
+          agent-viewer<small>コーディングエージェントログビューア</small>
         </div>
         <div className="group">ダッシュボード</div>
         <a
@@ -63,5 +84,6 @@ export function App() {
         )}
       </main>
     </div>
+    </SourceFilterContext.Provider>
   );
 }
