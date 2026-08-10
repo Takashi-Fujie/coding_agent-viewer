@@ -46,6 +46,9 @@ export function createClaudeSource(options: ClaudeSourceOptions): LogSource {
       }
       return groups;
     },
+    sessionIdFor(filePath: string): string | null {
+      return filePath.endsWith('.jsonl') ? basename(filePath, '.jsonl') : null;
+    },
     // Claude の正規化は行単位で完結する（走査文脈なし）。従来の normalizeRecord の
     // 薄いラッパで、レコード列・キャッシュ内容は source 省略時と一致する（SPEC-CODEX-070）。
     createNormalizer() {

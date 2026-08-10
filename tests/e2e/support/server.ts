@@ -7,7 +7,7 @@
  * （実運用と同じ Express 配信経路で検証するため）。
  */
 import { createApp } from '../../../server/app.js';
-import { E2E_CACHE_DIR, E2E_CLAUDE_DIR, E2E_LOG_DIR, E2E_PORT } from './env.js';
+import { E2E_CACHE_DIR, E2E_CLAUDE_DIR, E2E_CODEX_DIR, E2E_LOG_DIR, E2E_PORT } from './env.js';
 import { seed } from './seed.js';
 
 await seed();
@@ -16,6 +16,7 @@ const app = createApp({
   logDir: E2E_LOG_DIR,
   cacheDir: E2E_CACHE_DIR,
   claudeDir: E2E_CLAUDE_DIR,
+  codexSessionsDir: E2E_CODEX_DIR,
 });
 
 app.listen(E2E_PORT, '127.0.0.1', () => {

@@ -57,8 +57,8 @@ export async function loadCache(cachePath: string): Promise<IndexCacheFile | nul
   return cache as IndexCacheFile;
 }
 
-async function saveCache(cachePath: string, index: SessionIndex): Promise<void> {
-  const payload: IndexCacheFile = { schemaVersion: INDEX_SCHEMA_VERSION, ...index };
+async function saveCache(cachePath: string, index: SessionIndex, source: string): Promise<void> {
+  const payload: IndexCacheFile = { schemaVersion: INDEX_SCHEMA_VERSION, source, ...index };
   await mkdir(join(cachePath, '..'), { recursive: true });
   await writeFile(cachePath, JSON.stringify(payload), 'utf8');
 }
@@ -66,9 +66,15 @@ async function saveCache(cachePath: string, index: SessionIndex): Promise<void> 
 /**
  * キャッシュと現在のファイル状態から、再利用 / 増分 / 全再構築のどれを取るかを決める。
  */
-export function decideStrategy(cache: IndexCacheFile | null, current: FileStat): IndexStrategy {
+export function decideStrategy(
+  cache: IndexCacheFile | null,
+  current: FileStat,
+  expectedSource = 'claude',
+): IndexStrategy {
   if (!cache) return 'rebuild';
   if (cache.schemaVersion !== INDEX_SCHEMA_VERSION) return 'rebuild';
+  // 別ソースのパーサで書かれたキャッシュは内容が信用できない（source 未記載は 'claude' 扱い）
+  if ((cache.source ?? 'claude') !== expectedSource) return 'rebuild';
   // mtime の逆行はファイルの差し替え・巻き戻しを意味する
   if (current.mtimeMs < cache.mtimeMs) return 'rebuild';
   // 追記のみの前提が崩れている
@@ -87,7 +93,8 @@ export async function buildIndex(filePath: string, options: BuildOptions): Promi
   const stats = await stat(filePath);
   const cachePath = cachePathFor(options.cacheDir, filePath);
   const cache = await loadCache(cachePath);
-  const strategy = decideStrategy(cache, { size: stats.size, mtimeMs: stats.mtimeMs });
+  const expectedSource = options.source?.id ?? 'claude';
+  const strategy = decideStrategy(cache, { size: stats.size, mtimeMs: stats.mtimeMs }, expectedSource);
 
   if (strategy === 'reuse' && cache) {
     const index: SessionIndex = {
@@ -124,7 +131,7 @@ export async function buildIndex(filePath: string, options: BuildOptions): Promi
     records,
     summary,
   };
-  await saveCache(cachePath, index);
+  await saveCache(cachePath, index, expectedSource);
 
   return { index, strategy, parsedBytes: stats.size - resumeFrom };
 }

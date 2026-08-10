@@ -64,6 +64,26 @@ export function parseTzOffset(query: Record<string, unknown>): number {
   return Number.parseInt(raw, 10);
 }
 
+/**
+ * source クエリ（ソース id）を検証して取り出す（SPEC-DASH-081〜082）。
+ * 未指定は undefined（全ソース）。登録に無い id は 400。
+ */
+export function parseSource(query: Record<string, unknown>, snapshot: Snapshot): string | undefined {
+  const raw = queryString(query['source']);
+  if (raw === undefined) return undefined;
+  if (!snapshot.sourcesById.has(raw)) {
+    throw new HttpError(400, `未登録のソースです: ${raw}`);
+  }
+  return raw;
+}
+
+/** source 指定があればそのソースのグループだけに絞る（未指定は全ソース）。 */
+export function projectsBySource(snapshot: Snapshot, source: string | undefined) {
+  return source === undefined
+    ? snapshot.projects
+    : snapshot.projects.filter((p) => p.sourceId === source);
+}
+
 /** from / to（YYYY-MM-DD）を検証して取り出す。不正な形式は 400。 */
 export function parseRange(query: Record<string, unknown>): DateRange {
   const range: DateRange = { from: undefined, to: undefined };

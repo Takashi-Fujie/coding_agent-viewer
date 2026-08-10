@@ -4,7 +4,7 @@
 import { Router } from 'express';
 import { dailyByModel, filterByRange } from '../aggregate.js';
 import { estimateRecordsCost } from '../cost.js';
-import { HttpError, parseRange, parseTzOffset, wrap } from '../http.js';
+import { HttpError, parseRange, parseSource, parseTzOffset, projectsBySource, wrap } from '../http.js';
 import type { ApiContext } from '../http.js';
 import type { SessionEntry } from '../store.js';
 import type { PriceTable } from '../cost.js';
@@ -23,6 +23,7 @@ function sessionListItem(
 ): Record<string, unknown> {
   const summary = session.index.summary;
   const records = filter(session.index.records);
+  const filteredCount = records.length;
   let totalTokens = 0;
   for (const record of records) {
     if (record.kind !== 'assistant' || record.usage === undefined) continue;
@@ -32,6 +33,8 @@ function sessionListItem(
 
   return {
     id: session.id,
+    source: session.sourceId,
+    records: filteredCount,
     title: summary.title ?? null,
     firstTimestamp: summary.firstTimestamp ?? null,
     lastTimestamp: summary.lastTimestamp ?? null,
@@ -48,9 +51,10 @@ export function projectRoutes(ctx: ApiContext): Router {
 
   router.get(
     '/api/projects',
-    wrap(async (_req, res) => {
+    wrap(async (req, res) => {
       const [snapshot, table] = await Promise.all([ctx.load(), ctx.loadTable()]);
-      res.json(snapshot.projects.map((p) => projectListItem(p, table)));
+      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
+      res.json(projects.map((p) => projectListItem(p, table)));
     }),
   );
 
@@ -60,8 +64,9 @@ export function projectRoutes(ctx: ApiContext): Router {
       const { from, to } = parseRange(req.query);
       const tzOffset = parseTzOffset(req.query);
       const [snapshot, table] = await Promise.all([ctx.load(), ctx.loadTable()]);
+      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
 
-      const project = snapshot.projects.find((p) => p.id === req.params['id']);
+      const project = projects.find((p) => p.id === req.params['id']);
       if (!project) {
         throw new HttpError(404, `プロジェクトが見つかりません: ${req.params['id']}`);
       }
@@ -75,6 +80,7 @@ export function projectRoutes(ctx: ApiContext): Router {
 
       res.json({
         id: project.id,
+        source: project.sourceId,
         path: projectPath(project),
         range: { from: from ?? null, to: to ?? null },
         daily: dailyByModel(records, table, tzOffset),

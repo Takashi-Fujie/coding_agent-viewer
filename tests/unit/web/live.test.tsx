@@ -98,6 +98,7 @@ function makeDetail(): SessionDetail {
   return {
     id: 'sess-1',
     projectId: '-home-dev-live',
+    source: 'claude',
     summary: makeSummary(),
     cost: { estimated: true, source: 'test', currency: 'USD', total: 0.5, byModel: {}, unknownModels: [] },
     messages: [

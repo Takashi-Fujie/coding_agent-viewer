@@ -54,6 +54,8 @@ export type MessageMeta = IndexRecord & {
 export interface SessionDetail {
   id: string;
   projectId: string;
+  /** セッションを発見したソース id（SPEC-DASH-083）。 */
+  source: string;
   summary: SessionSummary;
   cost: CostSummary;
   messages: MessageMeta[];
@@ -62,17 +64,25 @@ export interface SessionDetail {
 /** GET /api/projects の 1 要素（簡易入口用。#7 で本実装に置き換える）。 */
 export interface ProjectListItem {
   id: string;
+  /** グループを発見したソース id（SPEC-DASH-083）。 */
+  source: string;
   /** セッションの cwd 由来の実パス（SPEC-CHAT-004）。cwd が取れないときは null。 */
   path: string | null;
   sessionCount: number;
   totalTokens: number;
   estimatedCost: number;
+  /** 範囲フィルタ後のレコード件数（SPEC-DASH-084）。日別絞り込みの基準。 */
+  records: number;
   lastTimestamp: string | null;
 }
 
 /** GET /api/projects/:id の sessions の 1 要素。 */
 export interface SessionListItem {
   id: string;
+  /** セッションを発見したソース id（SPEC-DASH-083）。 */
+  source: string;
+  /** 範囲フィルタ後のレコード件数（SPEC-DASH-084）。日別絞り込みの基準。 */
+  records: number;
   title: string | null;
   firstTimestamp: string | null;
   lastTimestamp: string | null;
@@ -110,6 +120,8 @@ export interface OverviewResponse {
 export interface SearchHit {
   projectId: string;
   sessionId: string;
+  /** ヒットしたセッションのソース id（SPEC-DASH-083）。 */
+  source: string;
   offset: number;
   preview: string;
 }
@@ -177,4 +189,15 @@ export interface ConfigResponse {
   plugins: PluginInfo[];
   settings: unknown;
   history: HistoryProject[];
+}
+
+/** GET /api/sources の 1 要素（SPEC-DASH-080）。 */
+export interface SourceInfo {
+  id: string;
+  sessions: number;
+}
+
+/** GET /api/sources のレスポンス。 */
+export interface SourcesResponse {
+  sources: SourceInfo[];
 }

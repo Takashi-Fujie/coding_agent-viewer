@@ -6,10 +6,12 @@
  */
 import { useState } from 'react';
 import { api } from '../api';
+import { SourceBadge, useSourceFilter } from '../lib/source';
 import { routeHash } from '../router';
 import type { SearchResponse } from '../lib/types';
 
 export function SearchPanel() {
+  const { source } = useSourceFilter();
   const [q, setQ] = useState('');
   const [result, setResult] = useState<SearchResponse | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -21,7 +23,7 @@ export function SearchPanel() {
     if (word.length === 0) return;
     setBusy(true);
     setError(undefined);
-    api.search(word).then(
+    api.search(word, source).then(
       (res) => {
         setResult(res);
         setBusy(false);
@@ -92,6 +94,7 @@ export function SearchPanel() {
                   >
                     <td>
                       <span className="mono">{h.projectId}</span>
+                      <SourceBadge source={h.source} />
                       <span className="pmeta mono">{h.sessionId}</span>
                     </td>
                     <td className="mono">{h.preview}</td>

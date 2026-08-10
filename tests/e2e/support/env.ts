@@ -35,3 +35,26 @@ export function sessionFilePath(sessionId: string): string {
 
 /** 全文検索 E2E が探す一意な合成トークン。 */
 export const SEARCH_TOKEN = 'E2E検索専用トークンXYZQ';
+
+/* ---- Codex ソース（Issue #31） ---- */
+
+export const E2E_CODEX_DIR = join(E2E_ROOT, 'codex-sessions');
+/** Codex 合成 rollout（`rollout-*.jsonl` 命名。timestamp / UUID は解釈されない）。 */
+export const CODEX_ROLLOUT = 'rollout-e2e-00000000-0000-7000-8000-0000000000c1';
+export const SESSION_CODEX = `codex:${CODEX_ROLLOUT}`;
+
+/**
+ * Codex グループ（= 日付ディレクトリ）はローカル日付の「今日」。
+ * seed（サーバプロセス）とテスト（Playwright ワーカー）が同じ計算で共有する。
+ */
+export function codexDayId(): string {
+  const d = new Date(Date.now() - 30 * 60_000);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${String(d.getFullYear())}-${mm}-${dd}`;
+}
+
+export function codexFilePath(): string {
+  const [y, m, d] = codexDayId().split('-') as [string, string, string];
+  return join(E2E_CODEX_DIR, y, m, d, `${CODEX_ROLLOUT}.jsonl`);
+}

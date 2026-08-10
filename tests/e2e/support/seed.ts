@@ -9,6 +9,7 @@
 import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import {
   E2E_CLAUDE_DIR,
   E2E_LOG_DIR,
@@ -19,6 +20,7 @@ import {
   SESSION_LIVE,
   SESSION_MAIN,
   SESSION_SAMPLE,
+  codexFilePath,
   sessionFilePath,
 } from './env.js';
 
@@ -174,6 +176,44 @@ export function liveAppendLine(n: number): Record<string, unknown> {
   });
 }
 
+/**
+ * Codex 合成 rollout（Issue #31・usage は #30 まで未集計 = token_count 行を持たない）。
+ * ローカル日付の「今日」の日付ディレクトリに置く（日付クリック絞り込みの検証用）。
+ */
+function codexSessionLines(): Record<string, unknown>[] {
+  return [
+    {
+      timestamp: iso(25),
+      type: 'session_meta',
+      payload: { id: '00000000-0000-7000-8000-0000000000c1', cwd: '/home/dev/sample-codex', cli_version: '0.147.0' },
+    },
+    { timestamp: iso(24), type: 'turn_context', payload: { turn_id: 'turn-e2e-1', model: 'gpt-5.5' } },
+    {
+      timestamp: iso(23),
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Codex E2E の依頼文。' }] },
+    },
+    {
+      timestamp: iso(22),
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Codex 初期応答。' }] },
+    },
+  ];
+}
+
+/** Codex ライブ更新テストが追記する行（tests 側からも import する）。 */
+export function codexAppendLine(n: number): Record<string, unknown> {
+  return {
+    timestamp: new Date().toISOString(),
+    type: 'response_item',
+    payload: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: `Codex ライブ追記 ${String(n)}` }],
+    },
+  };
+}
+
 function toJsonl(lines: Record<string, unknown>[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
 }
@@ -228,6 +268,10 @@ export async function seed(): Promise<void> {
   await cp(SAMPLE_FIXTURE, sessionFilePath(SESSION_SAMPLE));
   await writeFile(sessionFilePath(SESSION_MAIN), toJsonl(mainSessionLines()), 'utf8');
   await writeFile(sessionFilePath(SESSION_LIVE), toJsonl(liveSessionLines()), 'utf8');
+
+  const codexPath = codexFilePath();
+  await mkdir(dirname(codexPath), { recursive: true });
+  await writeFile(codexPath, toJsonl(codexSessionLines()), 'utf8');
 
   await seedClaudeDir();
 }

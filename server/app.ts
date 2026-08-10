@@ -23,6 +23,7 @@ import { overviewRoutes } from './routes/overview.js';
 import { projectRoutes } from './routes/projects.js';
 import { searchRoutes } from './routes/search.js';
 import { sessionRoutes } from './routes/sessions.js';
+import { sourceRoutes } from './routes/sources.js';
 import { statsRoutes } from './routes/stats.js';
 
 export interface AppOptions {
@@ -52,15 +53,20 @@ export const DEFAULT_WEB_DIST_DIR = fileURLToPath(new URL('../web/dist', import.
 
 export function createApp(options: AppOptions): Express {
   const loadTable = (): ReturnType<typeof loadPriceTable> => loadPriceTable(options.priceTablePath);
-  const sources = [createClaudeSource({ logDir: options.logDir })];
+  // 発見（store）と監視（hub）で同じソース実体・同じルートを共有する
+  const roots = [{ source: createClaudeSource({ logDir: options.logDir }), dir: options.logDir }];
   if (options.codexSessionsDir !== undefined) {
-    sources.push(createCodexSource({ sessionsDir: options.codexSessionsDir }));
+    roots.push({
+      source: createCodexSource({ sessionsDir: options.codexSessionsDir }),
+      dir: options.codexSessionsDir,
+    });
   }
+  const sources = roots.map((r) => r.source);
   const ctx: ApiContext = {
     load: () => loadSnapshot({ sources, cacheDir: options.cacheDir }),
     loadTable,
     claudeDir: options.claudeDir,
-    hub: options.hub ?? createLiveHub({ logDir: options.logDir, cacheDir: options.cacheDir, loadTable }),
+    hub: options.hub ?? createLiveHub({ roots, cacheDir: options.cacheDir, loadTable }),
   };
 
   const app = express();
@@ -76,6 +82,7 @@ export function createApp(options: AppOptions): Express {
   app.use(projectRoutes(ctx));
   app.use(sessionRoutes(ctx));
   app.use(searchRoutes(ctx));
+  app.use(sourceRoutes(ctx));
   app.use(statsRoutes(ctx));
   app.use(configRoutes(ctx));
   app.use(liveRoutes(ctx));

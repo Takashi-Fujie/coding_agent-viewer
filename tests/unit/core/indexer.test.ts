@@ -202,6 +202,79 @@ describe('buildIndex', () => {
   });
 });
 
+describe('SPEC-LIVE: キャッシュのソース記録（Issue #31）', () => {
+  const codexLines = [
+    { timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: '00000000-0000-7000-8000-00000000000a', cwd: '/home/user/synthetic-project' } },
+    { timestamp: '2026-01-01T00:00:01.000Z', type: 'turn_context', payload: { turn_id: 'turn-001', model: 'gpt-5.5' } },
+    { timestamp: '2026-01-01T00:00:02.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '<synthetic> 応答' }] } },
+  ];
+
+  /** 日付階層に rollout を 1 本置いた Codex ツリーと source を作る。 */
+  async function codexSetup(dir: string) {
+    const { mkdir } = await import('node:fs/promises');
+    const { createCodexSource } = await import('../../../server/sources/codex.js');
+    const sessionsDir = join(dir, 'sessions');
+    const dayDir = join(sessionsDir, '2026', '01', '01');
+    await mkdir(dayDir, { recursive: true });
+    const path = join(dayDir, 'rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-00000000000a.jsonl');
+    await writeJsonl(path, codexLines);
+    return { path, source: createCodexSource({ sessionsDir }), cacheDir: join(dir, '.cache') };
+  }
+
+  it('SPEC-LIVE-043: キャッシュは書き込んだソース id を記録し、同じソースなら再利用する', async () => {
+    await withTempDir(async (dir) => {
+      const { path, source, cacheDir } = await codexSetup(dir);
+
+      await buildIndex(path, { cacheDir, source });
+      const saved = JSON.parse(await readFile(cachePathFor(cacheDir, path), 'utf8')) as IndexCacheFile;
+      expect(saved.source).toBe('codex');
+
+      const second = await buildIndex(path, { cacheDir, source });
+      expect(second.strategy).toBe('reuse');
+    });
+  });
+
+  it('SPEC-LIVE-043: source 未記載のキャッシュ（Claude パーサによる汚染を含む）は codex ソースで再利用されず全再構築される', async () => {
+    await withTempDir(async (dir) => {
+      const { path, source, cacheDir } = await codexSetup(dir);
+
+      // 現在の main の不具合を再現: source 未指定（Claude 相当）でキャッシュが書かれた状態
+      const poisoned = await buildIndex(path, { cacheDir });
+      // Claude パーサでは assistant 発言が 1 件も取れない（unknown 扱いになる）
+      expect(poisoned.index.records.some((r) => r.kind === 'assistant')).toBe(false);
+
+      const repaired = await buildIndex(path, { cacheDir, source });
+      expect(repaired.strategy).toBe('rebuild');
+      expect(repaired.index.records.some((r) => r.kind === 'assistant')).toBe(true);
+    });
+  });
+
+  it('SPEC-LIVE-043: codex と記録されたキャッシュは source 未指定（claude 相当）では再利用されず全再構築される', async () => {
+    await withTempDir(async (dir) => {
+      const { path, source, cacheDir } = await codexSetup(dir);
+
+      await buildIndex(path, { cacheDir, source });
+      const asClaude = await buildIndex(path, { cacheDir });
+      expect(asClaude.strategy).toBe('rebuild');
+    });
+  });
+
+  it('SPEC-LIVE-043: source 未記載のキャッシュは claude 相当とみなされ再利用される（既存キャッシュを無駄に再構築しない）', async () => {
+    await withTempDir(async (dir) => {
+      const { path, cacheDir } = await setup(dir, seedLines);
+
+      // 旧版（source フィールド導入前）のキャッシュを再現する
+      const cachePath = cachePathFor(cacheDir, path);
+      const saved = JSON.parse(await readFile(cachePath, 'utf8')) as Record<string, unknown>;
+      delete saved['source'];
+      await writeFile(cachePath, JSON.stringify(saved), 'utf8');
+
+      const second = await buildIndex(path, { cacheDir });
+      expect(second.strategy).toBe('reuse');
+    });
+  });
+});
+
 describe('SPEC-DASH: スキーマ版数', () => {
   it('SPEC-DASH-003: INDEX_SCHEMA_VERSION は 3 以上である（isToolError / hook を持たない旧キャッシュを再利用しない）', () => {
     expect(INDEX_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);

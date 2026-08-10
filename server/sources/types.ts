@@ -39,6 +39,12 @@ export interface LogSource {
   id: string;
   /** ルート配下を走査してグループとセッションの一覧を返す。ルートが無ければ空配列（エラーにしない）。 */
   discoverGroups(): Promise<DiscoveredGroup[]>;
+  /**
+   * ファイルパス → 公開セッション ID（claude は basename、それ以外は `<source>:<basename>`）。
+   * ライブ監視がファイルイベントを購読者の ID と照合するのに使う（SPEC-LIVE-040）。
+   * セッションでないファイル（Codex の rollout 命名に合わない等）は null。
+   */
+  sessionIdFor(filePath: string): string | null;
   /** 1 走査分の正規化器を作る。state は前回 serialize() が返した走査文脈（増分再開用）。 */
   createNormalizer(state?: unknown): RecordNormalizer;
   /** 生レコード 1 件を表示用の本文へ正規化する（sessions ルートがソース別に呼ぶ）。 */

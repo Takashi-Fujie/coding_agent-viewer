@@ -6,7 +6,7 @@
  */
 import { Router } from 'express';
 import { iterateLines } from '../core/scan.js';
-import { HttpError, queryInt, queryString, wrap } from '../http.js';
+import { HttpError, parseSource, projectsBySource, queryInt, queryString, wrap } from '../http.js';
 import type { ApiContext } from '../http.js';
 
 const DEFAULT_LIMIT = 100;
@@ -17,6 +17,8 @@ const CONTEXT_AFTER = 160;
 export interface SearchHit {
   projectId: string;
   sessionId: string;
+  /** ヒットしたセッションのソース id（SPEC-DASH-083）。 */
+  source: string;
   offset: number;
   preview: string;
 }
@@ -37,11 +39,12 @@ export function searchRoutes(ctx: ApiContext): Router {
       const limit = queryInt(req.query['limit'], DEFAULT_LIMIT);
 
       const snapshot = await ctx.load();
+      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
       const needle = q.toLowerCase();
       const hits: SearchHit[] = [];
       let truncated = false;
 
-      outer: for (const project of snapshot.projects) {
+      outer: for (const project of projects) {
         for (const session of project.sessions) {
           for await (const line of iterateLines(session.filePath)) {
             const matchIndex = line.text.toLowerCase().indexOf(needle);
@@ -55,6 +58,7 @@ export function searchRoutes(ctx: ApiContext): Router {
             hits.push({
               projectId: project.id,
               sessionId: session.id,
+              source: project.sourceId,
               offset: line.offset,
               preview: previewAround(line.text, matchIndex, q.length),
             });

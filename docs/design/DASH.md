@@ -1,6 +1,6 @@
 # SPEC-DASH — ダッシュボード（詳細設計書）
 
-担当 Issue: #7。人間向けの基本仕様書は [docs/spec/DASH.md](../spec/DASH.md)。画面の正本は [docs/mockups/viewer-mock.html](../mockups/viewer-mock.html)（subagent 実行トレースと「その他」集約行は対象外 — 基本仕様書「この Issue で扱わないもの」参照）。
+担当 Issue: #7（初版）→ #31（ソース切替・Codex 統合。末尾のセクション）。人間向けの基本仕様書は [docs/spec/DASH.md](../spec/DASH.md)。画面の正本は [docs/mockups/viewer-mock.html](../mockups/viewer-mock.html)（subagent 実行トレースと「その他」集約行は対象外 — 基本仕様書「この Issue で扱わないもの」参照）。
 
 ## データモデル
 
@@ -152,6 +152,75 @@ tool_result（user レコード）には `tool_use_id` しか無い。ツール�
 - [x] `SPEC-DASH-071` Overview の検索から合成ログ内の語でヒットし、クリックでセッション分析画面へ遷移できる
 - [x] `SPEC-DASH-072` Tools & Agents にツール別ランキングが描画される
 - [x] `SPEC-DASH-073` 未知モデルを含む合成ログで Overview の警告バナーに件数が表示される
+
+---
+
+# ソース切替と Codex 統合（Issue #31）
+
+基本仕様書は [docs/spec/DASH.md](../spec/DASH.md) の同名セクション。ライブ更新は [LIVE.md](LIVE.md) 側。
+
+## データモデル
+
+### ProjectEntry / DTO への source 露出
+
+- `server/store.ts` の `ProjectEntry` に `sourceId: string` を追加する（グループは単一ソースから発見されるため 1 グループ 1 ソース。ソースをまたぐ併合はしない）
+- API DTO に `source: string` を追加する: `ProjectListItem`・プロジェクト詳細のセッション行・`GET /api/sessions/:id` のレスポンス・検索ヒット行。`SessionEntry.sourceId` の「API に露出させない」という #28 の内部規約は本 Issue で改訂する（UI 識別が要件になったため）
+- グループ ID の名前空間はソース間で分けない（#28 の決定を維持）。Codex のグループ ID は `YYYY-MM-DD`、Claude は `-` 縮約ディレクトリ名で形式が重ならず、`/api/projects/:id` の探索は従来どおり id 一致でよい。**形式が重なる新ソースを将来足すときはグループ ID にも接頭辞を導入する**（この判断をここに残す）
+
+### 範囲フィルタ後のレコード件数
+
+- `ProjectListItem` とセッション行に `records: number`（from / to / tzOffset 適用後のレコード件数）を追加する
+- 日付クリック絞り込みのクライアント側条件を `totalTokens > 0 || estimatedCost > 0` から **`records > 0`** に変える（`OverviewView.tsx` / `SessionListView.tsx`）。usage が構造的に 0 の Codex 行も、その日に活動があれば一覧に残る。その日にレコードが無い行は従来どおり落ちる
+
+## API
+
+エンドポイント表の正本は [API.md](API.md)。この Issue での変更:
+
+- **`GET /api/sources` を新設**: 登録済みソースの一覧 `{ sources: [{ id, sessions }] }` を返す（`sessions` は発見済みセッション数。ルート不存在のソースは 0）。切替 UI の表示・disabled 判定に使う
+- **`source` クエリを追加**: `/api/overview` `/api/projects` `/api/projects/:id` `/api/search` `/api/stats/tokens` `/api/stats/tools` `/api/stats/agents` `/api/stats/hooks` が `source=<id>` を受け、集計・一覧・検索の対象を指定ソースのグループに絞る。未指定は全ソース（後方互換）。登録に無いソース id は 400
+- 絞り込みは `snapshot.projects` を `sourceId` でフィルタしてから既存集計へ流す共通ヘルパ（`server/http.ts` の `parseSource`）で行う。合計値・チャート・byModel・cost もフィルタ後レコードから計算されるため、見せかけの行隠しにならない
+
+## 画面
+
+- **切替 UI**: セグメント切替（全ソース / Claude / Codex・`lib/source.tsx` の `SourceSwitch`）を Overview と Tools & Agents の期間フィルタ横（`.filterrow` 内）に置く（2026-08-09 オーナー合意で左ナビから移動）。選択は App レベルの state（Context）で保持し（ハッシュ遷移で失われない）、URL には載せない。既定は全ソース。`/api/sources` で Codex のセッション数が 0 なら「Codex」を disabled にする（切替 UI 自体は常時表示。2026-08-09 オーナー合意）
+- 各画面は選択ソースを API の `source` クエリへ渡して再取得する（クライアント側で行を隠さない）
+- **ソースバッジ**: プロジェクト一覧・セッション一覧・検索ヒット・プロジェクト画面のヘッダに DTO の `source` に基づくバッジ（`claude` / `codex` の表示名）を付ける。全ソース表示時も付ける（絞り込み時だけ出すと見分けの用を成さないため）
+- **Codex グループの行ラベル**: `source !== 'claude'` のとき行ラベルを `id`（日付）にし、cwd 末尾の basename を使わない。cwd フルパスのサブテキスト表示は従来どおり残す（`OverviewView.tsx` の一覧行・`SessionListView.tsx` のヘッダ / パンくず）
+- Codex 行のコスト・トークン欄は 0 のとき「—（未集計）」表示にする（#30 で集計が入るまでの暫定。Claude 行の 0 は従来どおり数値表示）
+
+## 受け入れ基準（Issue #31）
+
+### API — ソース情報と絞り込み
+
+- [x] `SPEC-DASH-080` GET /api/sources は登録済みソースの id と発見済みセッション数を返し、ルートが無いソースは 0 件として返す
+- [x] `SPEC-DASH-081` GET /api/overview は source クエリで指定ソースだけの合計・モデル別・日次系列・プロジェクト一覧になり、未指定なら全ソース合算になる
+- [x] `SPEC-DASH-082` /api/projects・/api/projects/:id・/api/search・/api/stats/* も source で絞り込め、未登録のソース id には 400 を返す
+- [x] `SPEC-DASH-083` プロジェクト一覧・セッション一覧・検索ヒット・セッション要約の各 DTO に source が含まれる
+- [x] `SPEC-DASH-084` プロジェクト一覧・セッション一覧の各行は範囲フィルタ後のレコード件数 records を含む
+
+### 画面 — 切替と識別
+
+- [x] `SPEC-DASH-085` ヘッダの切替（全ソース / Claude / Codex）で一覧・合計値・チャートが選択ソースだけの値になり、選択は画面遷移をまたいで保持される
+- [x] `SPEC-DASH-086` Codex のセッションが 0 件のとき切替 UI は表示されたまま「Codex」の選択肢が disabled になる
+- [x] `SPEC-DASH-087` 一覧・検索ヒットの行にソースバッジが付き、Codex グループの行ラベルは cwd 末尾ではなく日付（グループ ID）になる
+- [x] `SPEC-DASH-088` 日付クリック絞り込みは records > 0 を基準にし、usage 0 の Codex 行もその日に活動があれば一覧に残る
+- [x] `SPEC-DASH-089` Codex 行のコスト・トークン欄は 0 円と断定せず未集計表示になる
+
+### E2E（tests/e2e）
+
+- [x] `SPEC-DASH-090` 切替で「Codex」を選ぶと Overview が Codex グループだけになり、「Claude」を選ぶと Codex グループが消えて従来値と一致する
+- [x] `SPEC-DASH-091` Codex グループの行にソースバッジと日付ラベルが描画される
+- [x] `SPEC-DASH-092` 日付クリック絞り込みで usage 0 の Codex セッションが一覧に残る
+- [x] `SPEC-DASH-093` Codex セッションが無い seed では「Codex」選択肢が disabled 表示になる
+
+## 実測値（2026-08-09・Issue #31 実装時）
+
+実ログで `/api/sources` が claude 27 / codex 21 セッションを返し、`source=codex` の
+Overview は 11 グループ / 2,535 レコード / トークン・コスト 0（画面は「未集計」表示・
+0 円と断定しない）。全ソース時の総コスト・総トークンは Claude のみ選択時と一致
+（Codex の usage が構造的に 0 のため）。切替 UI・バッジ・日付ラベル・日別絞り込みは
+実ログのレンダリングで確認。既知の制約: dailyOverview は usage 由来のため、Codex の
+活動しか無い日はチャートに帯が出ない（#30 の usage 会計で解消される）。
 
 ## 実測値（2026-08-06・Issue #7 実装時）
 

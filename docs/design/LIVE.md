@@ -1,6 +1,6 @@
 # SPEC-LIVE — ファイル監視とライブ更新（詳細設計書）
 
-担当 Issue: #8。人間向けの基本仕様書は [docs/spec/LIVE.md](../spec/LIVE.md)。
+担当 Issue: #8（初版）→ #31（Codex ライブ更新。末尾のセクション）。人間向けの基本仕様書は [docs/spec/LIVE.md](../spec/LIVE.md)。
 
 ## 実装方針
 
@@ -96,3 +96,54 @@ web/src/views/SessionView.tsx   # 統合（末尾追記・ヘッダ更新・ラ�
 - [x] `SPEC-LIVE-030` セッション分析画面を開いた状態で JSONL に追記すると、リロードなしで新しいメッセージが会話の末尾に現れる
 - [x] `SPEC-LIVE-031` 追記に合わせてヘッダの総トークンが増える
 - [x] `SPEC-LIVE-032` 別セッションを開いた状態では、他セッションへの追記で表示中の会話が変わらない
+
+---
+
+# Codex ライブ更新（Issue #31）
+
+基本仕様書は [docs/spec/LIVE.md](../spec/LIVE.md) の同名セクション。#8 実装の 3 つの Claude 前提を解く。
+
+## 現状の問題（#31 着手時の実測）
+
+1. **監視ルートが Claude のみ**: `createLiveHub` は `logDir`（`~/.claude/projects`）しか監視しない。`~/.codex/sessions` を見る仕組みが無い
+2. **セッション ID の不一致**: `live.ts` の `sessionIdOf` は `basename(filePath, '.jsonl')` を返すが、Codex の公開 ID は `codex:<basename>`（SPEC-CORE-073）。watcher を足しても購読者と照合できない
+3. **キャッシュ汚染**: SessionView は Codex セッションでも無条件に SSE 購読し、hub の `refresh()` が `buildIndex` を **source 未指定**（= Claude 相当のステートレス正規化）で呼ぶ。購読直後の追い付き配信で Codex rollout が Claude パーサで再解析され、壊れたインデックスがキャッシュを上書きする。以後 size / mtime 不変なら reuse され続ける（**現在の main で実際に起きる不具合**）
+
+## 実装方針
+
+### hub の複数ソース監視（1・2 の解決）
+
+- `createLiveHub` の入力を `{ roots: Array<{ source: LogSource; dir: string }>, cacheDir, loadTable }` に変える。`createApp` は Claude の `logDir` と Codex の `sessionsDir` を登録する（Codex 未設定のテストは従来どおり Claude のみ）
+- chokidar は全 root をまとめて監視する。`add` / `change` の `*.jsonl` を、パスがどの root 配下かで所属ソースに解決する。**新規日付ディレクトリ配下の新規 rollout も既存の再帰監視（`add` イベント）で自動的に対象へ入る**（#8 の SPEC-LIVE-002 と同じ機構。ディレクトリ単位の特別扱いは実装しない）
+- `LogSource` に `sessionIdFor(filePath: string): string | null` を追加し、公開 ID の規約（claude = basename、それ以外 = `<source>:<basename>`）を各ソースに置く。`live.ts` の `sessionIdOf` はこれを呼ぶ（ID 規約の重複定義をなくす）。Codex ソースは `rollout-*.jsonl` 命名に一致しないファイルに null を返し、監視対象から除く（発見規約と同一）
+
+### stat ポーリングの保証層（実装中の実測で追加）
+
+macOS の fsevents（chokidar）は**新規ディレクトリ連鎖の直後、その配下のイベントを永続的に取りこぼすことがある**（#31 実測: 6 回中 3 回、後続の追記の change も一切届かない）。新規日付ディレクトリの初回セッションでライブ更新が無言で死ぬ実害になるため、watcher に加えて**購読中ファイル限定の stat ポーリング**（`pollMs` 既定 1000ms）を保証層として置く。
+
+- 対象は購読中のファイルだけ（stat のコストのみ。SPEC-LIVE-005「購読の無いセッションを解析しない」と両立）
+- 基準値は**購読時点**で観測する（初回 tick を基準にするとファイル作成そのものを変化として検知できない）
+- refresh 成功時に配信済み状態を基準へ反映し、watcher が先に拾った成長をポーリングが二重解析しない
+- 購読者ゼロになってもタイマーは残るが、tick は購読リストが空なら何もしない（unref 済みでプロセス終了は妨げない）
+- 導入後の実測（新規日付ディレクトリ + 新規 rollout + 追記、pollMs 100）: 8/8 回で配信成立。初回検知 52〜156ms・追記追随 50〜103ms（watcher が生きている回は watcher が先に拾い、取りこぼし回はポーリングが拾う）
+
+### refresh のソース正規化とキャッシュの自己修復（3 の解決）
+
+- hub の `refresh()` は解決した所属ソースを `buildIndex(filePath, { cacheDir, source })` に渡す（store.ts と同じ呼び方に揃える）
+- **インデックスキャッシュに `source: string` を記録する**（`IndexCacheFile` へ追加。`INDEX_SCHEMA_VERSION` は変えない）。`decideStrategy` は「キャッシュの source と期待ソースの不一致」を rebuild 条件に加える。**source 未記載のキャッシュは 'claude' とみなす** — これにより:
+  - 既存の正常な Claude キャッシュは再構築されない（未記載 = claude = 一致）
+  - Claude パーサで書かれた汚染キャッシュ（未記載）は、Codex ソースで読んだ瞬間に不一致 → rebuild され自動修復される（#29 で正しく書かれた Codex キャッシュも未記載のため 1 回だけ再構築されるが、正しい内容で書き直されるだけで害はない）
+
+## 受け入れ基準（Issue #31）
+
+### 監視とソース解決（server/live.ts・server/sources）
+
+- [x] `SPEC-LIVE-040` Codex rollout への追記を検知し、`codex:` 接頭辞の公開 ID で購読者と照合して append を配信する
+- [x] `SPEC-LIVE-041` 監視開始後に新しく作られた日付ディレクトリ配下の新規 rollout も自動で監視対象に入る
+- [x] `SPEC-LIVE-042` ライブ更新の再解析は所属ソースの正規化で行われ、Codex セッションを購読しても Claude パーサで再解析されない
+- [x] `SPEC-LIVE-043` インデックスキャッシュは書き込んだソースを記録し、期待ソースと不一致のキャッシュ（source 未記載の非 claude を含む）は再利用されず全再構築される
+
+### E2E（tests/e2e）
+
+- [x] `SPEC-LIVE-050` Codex 合成 rollout のセッション分析画面を開いた状態で追記すると、リロードなしで新しいメッセージが末尾に現れる
+- [x] `SPEC-LIVE-051` 別セッションを開いた状態では、Codex rollout への追記で表示中の会話が変わらない

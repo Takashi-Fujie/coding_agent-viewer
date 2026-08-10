@@ -8,16 +8,17 @@
 
 | エンドポイント | 説明 | 主なクエリ |
 |---|---|---|
-| `GET /api/overview` | 全体集計（総トークン・推定コスト・モデル別・日次系列・プロジェクト一覧） | `from` `to`（YYYY-MM-DD）`tzOffset` |
-| `GET /api/projects` | プロジェクト一覧（セッション数・トークン・推定コスト・最終更新） | — |
-| `GET /api/projects/:id` | プロジェクト詳細（日次モデル別系列 + 日次推定コスト・セッション一覧） | `from` `to` `tzOffset` |
+| `GET /api/overview` | 全体集計（総トークン・推定コスト・モデル別・日次系列・プロジェクト一覧） | `from` `to`（YYYY-MM-DD）`tzOffset` `source` |
+| `GET /api/projects` | プロジェクト一覧（セッション数・トークン・推定コスト・最終更新） | `source` |
+| `GET /api/projects/:id` | プロジェクト詳細（日次モデル別系列 + 日次推定コスト・セッション一覧） | `from` `to` `tzOffset` `source` |
 | `GET /api/sessions/:id` | セッション要約（モデル・トークン・推定コスト・skip 行数・メッセージメタ） | — |
 | `GET /api/sessions/:id/messages` | メッセージ本文（offset seek・ページング） | `start` `limit` |
-| `GET /api/search` | 全文検索（ストリーム grep） | `q` `limit` |
-| `GET /api/stats/tokens` | モデル別 × 日別トークン | `from` `to` `tzOffset` |
-| `GET /api/stats/tools` | ツール別呼出・失敗数、MCP サーバ別内訳、プロジェクト別利用（SPEC-DASH-020〜023） | `from` `to` `tzOffset` `project` |
-| `GET /api/stats/agents` | subagent / skill 別の起動実績と最終使用日時 | `from` `to` `tzOffset` `project` |
-| `GET /api/stats/hooks` | hook 発火履歴（新しい順・SPEC-DASH-025） | `from` `to` `tzOffset` `project` `limit` |
+| `GET /api/search` | 全文検索（ストリーム grep） | `q` `limit` `source` |
+| `GET /api/sources` | 登録済みログソースの一覧（id・発見済みセッション数。SPEC-DASH-080） | — |
+| `GET /api/stats/tokens` | モデル別 × 日別トークン | `from` `to` `tzOffset` `source` |
+| `GET /api/stats/tools` | ツール別呼出・失敗数、MCP サーバ別内訳、プロジェクト別利用（SPEC-DASH-020〜023） | `from` `to` `tzOffset` `project` `source` |
+| `GET /api/stats/agents` | subagent / skill 別の起動実績と最終使用日時 | `from` `to` `tzOffset` `project` `source` |
+| `GET /api/stats/hooks` | hook 発火履歴（新しい順・SPEC-DASH-025） | `from` `to` `tzOffset` `project` `limit` `source` |
 | `GET /api/live` | セッション差分の SSE 配信（詳細は [LIVE.md](LIVE.md)） | `session` `have` |
 | `GET /api/config` | `~/.claude/` の agents / skills / plugins / settings / history（詳細は docs/design/CONFIG.md） | — |
 | `GET /api/pricing` | 価格表（コストが「推定」であることの明示付き） | — |

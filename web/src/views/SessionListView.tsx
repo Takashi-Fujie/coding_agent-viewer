@@ -8,6 +8,7 @@ import { api } from '../api';
 import type { ProjectDetail } from '../api';
 import { ComboChart } from '../components/ComboChart';
 import { assignModelColors } from '../lib/colors';
+import { SourceBadge } from '../lib/source';
 import { formatTokens, formatUsd } from '../lib/format';
 import { routeHash } from '../router';
 import type { SessionListItem } from '../lib/types';
@@ -47,7 +48,8 @@ export function SessionListView({ projectId }: { projectId: string }) {
     let alive = true;
     api.project(projectId, { from: selectedDay, to: selectedDay }).then(
       (d) => {
-        if (alive) setDaySessions(d.sessions.filter((s) => s.totalTokens > 0 || s.estimatedCost > 0));
+        // usage 0 の Codex セッションも、その日にレコードがあれば残す（SPEC-DASH-088）
+        if (alive) setDaySessions(d.sessions.filter((s) => s.records > 0));
       },
       (e: Error) => {
         if (alive) setError(e.message);
@@ -88,10 +90,20 @@ export function SessionListView({ projectId }: { projectId: string }) {
       <div className="crumbs">
         <a href={routeHash({ view: 'overview' })}>← Overview</a>
         <span className="sep">/</span>
-        <span className="mono">{detail?.path ?? projectId}</span>
+        <span className="mono">
+          {detail?.source !== undefined && detail.source !== 'claude'
+            ? projectId
+            : (detail?.path ?? projectId)}
+        </span>
       </div>
       <div className="chathead">
-        <span className="t">{detail?.path?.split('/').at(-1) ?? projectId}</span>
+        {/* Codex グループの主ラベルは日付（グループ ID）。cwd 末尾にしない（SPEC-DASH-087） */}
+        <span className="t">
+          {detail?.source !== undefined && detail.source !== 'claude'
+            ? projectId
+            : (detail?.path?.split('/').at(-1) ?? projectId)}
+        </span>
+        {detail !== undefined && <SourceBadge source={detail.source} />}
         <span className="badge">{detail?.sessions.length ?? '…'} セッション</span>
         <span className="badge">{formatTokens(totalTokensAll)} tok</span>
         <span className="badge">{formatUsd(totalCostAll)} 推定</span>
@@ -165,11 +177,25 @@ export function SessionListView({ projectId }: { projectId: string }) {
                   >
                     <td>
                       <b>{s.title ?? s.id}</b>
+                      <SourceBadge source={s.source} />
                     </td>
                     <td className="mono">{s.models.join(', ')}</td>
                     <td className="num">{s.recordCount.toLocaleString()}</td>
-                    <td className="num">{formatTokens(s.totalTokens)}</td>
-                    <td className="num">{formatUsd(s.estimatedCost)}</td>
+                    {/* Codex の usage は #30 まで未集計（SPEC-DASH-089） */}
+                    <td className="num">
+                      {s.source !== 'claude' && s.totalTokens === 0 ? (
+                        <span className="est">未集計</span>
+                      ) : (
+                        formatTokens(s.totalTokens)
+                      )}
+                    </td>
+                    <td className="num">
+                      {s.source !== 'claude' && s.estimatedCost === 0 ? (
+                        <span className="est">未集計</span>
+                      ) : (
+                        formatUsd(s.estimatedCost)
+                      )}
+                    </td>
                     <td>{formatWhen(s.lastTimestamp)}</td>
                   </tr>
                 ))}
