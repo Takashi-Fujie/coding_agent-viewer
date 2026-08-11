@@ -34,12 +34,24 @@ async function getJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** ソース別内訳の 1 行（SPEC-DASH-111。範囲フィルタ後の値）。 */
+export interface SourceBreakdown {
+  source: string;
+  sessions: number;
+  records: number;
+  totalTokens: number;
+  estimatedCost: number;
+}
+
 export interface ProjectDetail {
   id: string;
-  source: string;
+  /** 表示プロジェクトを構成するソース id の一覧（SPEC-DASH-083 改定・#49）。 */
+  sources: string[];
   path: string | null;
   range: { from: string | null; to: string | null };
   daily: DailyModelRow[];
+  /** ソース別内訳（SPEC-DASH-111）。単一ソースでも要素 1 で返る。 */
+  bySource: SourceBreakdown[];
   sessions: SessionListItem[];
 }
 

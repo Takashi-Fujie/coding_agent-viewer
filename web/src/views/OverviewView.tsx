@@ -303,22 +303,25 @@ export function OverviewView() {
                   <td>
                     {/* 行ラベルはソース不問で cwd 末尾。path の無いグループ（cwd 欠損の日付フォールバック等）は id（SPEC-DASH-087） */}
                     <b>{basename(p.path) ?? p.id}</b>
-                    <SourceBadge source={p.source} />
+                    {/* 統合行は構成ソースのバッジを全て並べる（SPEC-DASH-113） */}
+                    {p.sources.map((s) => (
+                      <SourceBadge key={s} source={s} />
+                    ))}
                     {p.path !== null && <span className="pmeta mono">{p.path}</span>}
                   </td>
                   <td className="num">
                     {p.sessionCount}
                   </td>
-                  {/* Codex の usage は #30 まで未集計。0 円と断定しない（SPEC-DASH-089） */}
+                  {/* 未集計表示は claude を含まない行のみ（SPEC-DASH-089 / 113。claude を含む統合行は数値表示） */}
                   <td className="num">
-                    {p.source !== 'claude' && p.totalTokens === 0 ? (
+                    {!p.sources.includes('claude') && p.totalTokens === 0 ? (
                       <span className="est">未集計</span>
                     ) : (
                       formatTokens(p.totalTokens)
                     )}
                   </td>
                   <td className="num">
-                    {p.source !== 'claude' && p.estimatedCost === 0 ? (
+                    {!p.sources.includes('claude') && p.estimatedCost === 0 ? (
                       <span className="est">未集計</span>
                     ) : (
                       <b>{formatUsd(p.estimatedCost)}</b>

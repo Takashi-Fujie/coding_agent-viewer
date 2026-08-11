@@ -29,6 +29,7 @@ import {
   SESSION_WT,
   SESSION_WT_MAIN,
   codexFilePath,
+  codexSharedFilePath,
   sessionFilePath,
 } from './env.js';
 
@@ -244,6 +245,31 @@ function codexSessionLines(): Record<string, unknown>[] {
   ];
 }
 
+/**
+ * Claude と同一 cwd（E2E_PROJECT_PATH）の Codex rollout（Issue #49・表示統合の seed）。
+ * usage 未集計・SEARCH_TOKEN 無し。トークン・コスト合計を変えないため既存 assert を壊さない。
+ */
+function codexSharedSessionLines(): Record<string, unknown>[] {
+  return [
+    {
+      timestamp: iso(20),
+      type: 'session_meta',
+      payload: { id: '00000000-0000-7000-8000-0000000000c2', cwd: E2E_PROJECT_PATH, cli_version: '0.147.0' },
+    },
+    { timestamp: iso(19), type: 'turn_context', payload: { turn_id: 'turn-e2e-2', model: 'gpt-5.5' } },
+    {
+      timestamp: iso(18),
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Codex 統合 E2E の依頼文。' }] },
+    },
+    {
+      timestamp: iso(17),
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Codex 統合応答。' }] },
+    },
+  ];
+}
+
 /** Codex ライブ更新テストが追記する行（tests 側からも import する）。 */
 export function codexAppendLine(n: number): Record<string, unknown> {
   return {
@@ -378,6 +404,8 @@ export async function seed(): Promise<void> {
   const codexPath = codexFilePath();
   await mkdir(dirname(codexPath), { recursive: true });
   await writeFile(codexPath, toJsonl(codexSessionLines()), 'utf8');
+  // Claude と同一 cwd の rollout（Issue #49・表示統合の seed）
+  await writeFile(codexSharedFilePath(), toJsonl(codexSharedSessionLines()), 'utf8');
 
   await seedWorktree();
   await seedClaudeDir();

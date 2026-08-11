@@ -15,8 +15,8 @@ import { createCodexSource } from '../../../server/sources/codex.js';
 import { loadSnapshot } from '../../../server/store.js';
 import { withTempDir, writeJsonl } from '../../helpers/fixtures.js';
 
-/** cwd 縮約 + `codex:` 接頭辞のグループ id（claude の縮約形式と衝突しないための規約）。 */
-const codexGroupId = (cwd: string): string => `codex:${cwd.replace(/[^A-Za-z0-9]/g, '-')}`;
+/** ソース中立のグループ id（#49 改定。cwd の非英数字 `-` 置換のみ・claude の縮約と同値）。 */
+const codexGroupId = (cwd: string): string => cwd.replace(/[^A-Za-z0-9]/g, '-');
 
 let seq = 0;
 
@@ -71,7 +71,7 @@ async function snapshotOf(root: string, sessionsDir: string) {
 }
 
 describe('Codex セッションの cwd グルーピング', () => {
-  it('SPEC-CODEX-100: codex セッションは summary.cwd 単位のグループに再編され、グループ id は codex: + cwd の非英数字 - 置換になる', async () => {
+  it('SPEC-CODEX-100: codex セッションは summary.cwd 単位のグループに再編され、グループ id はソース中立のパス縮約になる（#49 改定。旧: codex: 接頭辞付き）', async () => {
     await withTempDir(async (root) => {
       const sessionsDir = join(root, 'sessions');
       const cwdA = join(root, 'proj-a');
@@ -163,7 +163,7 @@ describe('worktree 併合の codex 適用（SPEC-CORE-090 改定）', () => {
     });
   });
 
-  it('SPEC-CODEX-105: worktree 併合で本体グループが無い場合は codex: 接頭辞付きの合成 id になり、同じ本体ルートの claude グループとは併合されない', async () => {
+  it('SPEC-CODEX-105: worktree 併合で本体グループが無い場合は接頭辞なしの合成 id になり、同じ本体ルートの claude グループとは内部併合されない（#49 改定。表示層でのみ統合）', async () => {
     await withTempDir(async (root) => {
       const { mainRoot, worktreeRoot } = await buildWorktreeTree(root);
       const sessionsDir = join(root, 'sessions');
@@ -187,7 +187,7 @@ describe('worktree 併合の codex 適用（SPEC-CORE-090 改定）', () => {
         cacheDir: join(root, 'cache'),
       });
 
-      // codex は codex: 接頭辞の合成 id に併合される（claude の proj-main へは行かない）
+      // codex は接頭辞なしの合成 id（本体ルート縮約）に併合される（claude の proj-main へは行かない）
       const synthesized = snapshot.projects.find((p) => p.id === codexGroupId(mainRoot));
       expect(synthesized?.sourceId).toBe('codex');
       expect(synthesized?.sessions.map((s) => s.id)).toEqual([wtSession]);

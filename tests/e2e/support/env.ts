@@ -74,3 +74,13 @@ export function codexFilePath(): string {
   const [y, m, d] = codexDayId().split('-') as [string, string, string];
   return join(E2E_CODEX_DIR, y, m, d, `${CODEX_ROLLOUT}.jsonl`);
 }
+
+/* ---- Claude / Codex 表示統合（Issue #49） ---- */
+
+/** Claude と同一 cwd（E2E_PROJECT_PATH）で作業した Codex rollout。統合行の seed。 */
+export const CODEX_ROLLOUT_SHARED = 'rollout-e2e-00000000-0000-7000-8000-0000000000c2';
+
+export function codexSharedFilePath(): string {
+  const [y, m, d] = codexDayId().split('-') as [string, string, string];
+  return join(E2E_CODEX_DIR, y, m, d, `${CODEX_ROLLOUT_SHARED}.jsonl`);
+}

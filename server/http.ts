@@ -5,7 +5,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { DATE_RE } from './aggregate.js';
 import type { PriceTable } from './cost.js';
 import type { LiveHub } from './live.js';
-import type { Snapshot } from './store.js';
+import type { ProjectEntry, Snapshot } from './store.js';
 
 /** 各ルートへ注入する依存。テストは logDir / cacheDir / claudeDir を差し替える。 */
 export interface ApiContext {
@@ -82,6 +82,40 @@ export function projectsBySource(snapshot: Snapshot, source: string | undefined)
   return source === undefined
     ? snapshot.projects
     : snapshot.projects.filter((p) => p.sourceId === source);
+}
+
+/**
+ * 同一 id のソース別グループを表示用に束ねたもの（SPEC-CORE-092・Issue #49）。
+ * 内部データは 1 グループ 1 ソースのまま、API・画面に出る手前でだけ統合する。
+ */
+export interface DisplayProject {
+  id: string;
+  /** 同一 id を構成するソース別グループ（1 件なら従来と同じ単一ソースの行）。 */
+  entries: ProjectEntry[];
+}
+
+/**
+ * snapshot.projects を id で束ねて表示プロジェクトの一覧にする。並びは先頭出現位置。
+ * source 指定時は部分表示（SPEC-CORE-093）: 選択ソースの**グループ**を持つ表示プロジェクト
+ * だけを残し、entries を選択ソース分に絞る。判定はエントリの有無であってセッション数では
+ * ない（セッション 0 件の claude 空グループは claude 選択で従来どおり残る）。
+ */
+export function displayProjects(snapshot: Snapshot, source: string | undefined): DisplayProject[] {
+  const groups: DisplayProject[] = [];
+  const byId = new Map<string, DisplayProject>();
+  for (const project of snapshot.projects) {
+    let group = byId.get(project.id);
+    if (group === undefined) {
+      group = { id: project.id, entries: [] };
+      byId.set(project.id, group);
+      groups.push(group);
+    }
+    group.entries.push(project);
+  }
+  if (source === undefined) return groups;
+  return groups
+    .filter((g) => g.entries.some((e) => e.sourceId === source))
+    .map((g) => ({ id: g.id, entries: g.entries.filter((e) => e.sourceId === source) }));
 }
 
 /** from / to（YYYY-MM-DD）を検証して取り出す。不正な形式は 400。 */

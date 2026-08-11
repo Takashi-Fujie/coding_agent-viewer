@@ -219,10 +219,11 @@ describe('loadSnapshot の worktree 併合', () => {
         cacheDir,
       });
 
-      // claude 側は従来どおり proj-main へ、codex 側は codex: 合成 id へ（ソースをまたいで混ざらない）
+      // claude 側は従来どおり proj-main へ、codex 側は本体ルート縮約の合成 id へ
+      // （ソースをまたいで混ざらない。#49 改定: 合成 id は接頭辞なしのソース中立形式）
       const claudeMain = snapshot.projects.find((p) => p.id === 'proj-main');
       expect(claudeMain?.sessions.map((s) => s.id).sort()).toEqual([SESSION_MAIN, SESSION_WT]);
-      const codexId = `codex:${mainRoot.replace(/[^A-Za-z0-9]/g, '-')}`;
+      const codexId = mainRoot.replace(/[^A-Za-z0-9]/g, '-');
       const codexMerged = snapshot.projects.find((p) => p.id === codexId);
       expect(codexMerged?.sourceId).toBe('codex');
       expect(codexMerged?.sessions.map((s) => s.id)).toEqual([
