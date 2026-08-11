@@ -26,14 +26,26 @@ const CLAUDE_PROJECT = {
 };
 
 const CODEX_PROJECT = {
-  id: '2026-08-06',
+  id: 'codex:-home-dev-codex-proj',
   source: 'codex',
-  path: '/home/dev/sample',
+  path: '/home/dev/codex-proj',
   sessionCount: 1,
   totalTokens: 0,
   estimatedCost: 0,
   records: 4,
   lastTimestamp: '2026-08-06T11:00:00.000Z',
+};
+
+/** cwd 欠損の日付フォールバックグループ（path 無し → id 表示）。 */
+const CODEX_DATE_FALLBACK = {
+  id: '2026-08-06',
+  source: 'codex',
+  path: null,
+  sessionCount: 1,
+  totalTokens: 0,
+  estimatedCost: 0,
+  records: 2,
+  lastTimestamp: '2026-08-06T12:00:00.000Z',
 };
 
 function payload(projects: unknown[]) {
@@ -110,21 +122,37 @@ describe('SourceSwitch（SPEC-DASH-085 / 086）', () => {
 });
 
 describe('ソースの識別表示（SPEC-DASH-087 / 089）', () => {
-  it('SPEC-DASH-087: 一覧の行にソースバッジが付き、Codex グループの行ラベルは日付（グループ ID）になる', async () => {
+  it('SPEC-DASH-087: 一覧の行にソースバッジが付き、行ラベルはソース不問で cwd 末尾（path 無しは id）になる', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify(payload([CLAUDE_PROJECT, CODEX_PROJECT])), { status: 200 })),
+      vi.fn(async () => new Response(JSON.stringify(payload([CLAUDE_PROJECT, CODEX_PROJECT, CODEX_DATE_FALLBACK])), { status: 200 })),
     );
 
     renderOverview(provider());
     const table = await screen.findByTestId('project-table');
 
-    // Codex 行: cwd 末尾（sample）ではなく日付ラベル + バッジ
-    const codexRow = within(table).getByText('2026-08-06', { selector: 'b' }).closest('tr')!;
+    // Codex 行: claude と同じ cwd 末尾ラベル + バッジ（#45 改定）
+    const codexRow = within(table).getByText('codex-proj', { selector: 'b' }).closest('tr')!;
     expect(within(codexRow).getByText('Codex')).toBeTruthy();
     // Claude 行: 従来どおり cwd 末尾ラベル + バッジ
     const claudeRow = within(table).getByText('sample', { selector: 'b' }).closest('tr')!;
     expect(within(claudeRow).getByText('Claude')).toBeTruthy();
+  });
+
+  it('SPEC-CODEX-106: codex グループの行ラベルが cwd 末尾の basename になり、path の無いグループは id 表示になる', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(payload([CODEX_PROJECT, CODEX_DATE_FALLBACK])), { status: 200 })),
+    );
+
+    renderOverview(provider());
+    const table = await screen.findByTestId('project-table');
+
+    // cwd ありグループ: basename ラベル（id の縮約形は出さない）
+    expect(within(table).getByText('codex-proj', { selector: 'b' })).toBeTruthy();
+    expect(within(table).queryByText('codex:-home-dev-codex-proj', { selector: 'b' })).toBeNull();
+    // cwd 欠損の日付フォールバックグループ: id（日付）ラベル
+    expect(within(table).getByText('2026-08-06', { selector: 'b' })).toBeTruthy();
   });
 
   it('SPEC-DASH-089: Codex 行のコスト・トークン欄は 0 円と断定せず未集計表示になる', async () => {
@@ -135,7 +163,7 @@ describe('ソースの識別表示（SPEC-DASH-087 / 089）', () => {
 
     renderOverview(provider());
     const table = await screen.findByTestId('project-table');
-    const codexRow = within(table).getByText('2026-08-06', { selector: 'b' }).closest('tr')!;
+    const codexRow = within(table).getByText('codex-proj', { selector: 'b' }).closest('tr')!;
 
     expect(within(codexRow).getAllByText('未集計').length).toBeGreaterThan(0);
     expect(within(codexRow).queryByText('$0.00')).toBeNull();
@@ -168,7 +196,7 @@ describe('日別絞り込み（SPEC-DASH-088）', () => {
 
     const table = screen.getByTestId('project-table');
     // usage 0 でも records > 0 の Codex 行は残る
-    expect(within(table).getByText('2026-08-06', { selector: 'b' })).toBeTruthy();
+    expect(within(table).getByText('codex-proj', { selector: 'b' })).toBeTruthy();
     // その日にレコードの無い Claude 行は落ちる
     expect(within(table).queryByText('sample', { selector: 'b' })).toBeNull();
   });

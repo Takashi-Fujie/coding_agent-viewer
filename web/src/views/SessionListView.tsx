@@ -151,19 +151,11 @@ export function SessionListView({ projectId }: { projectId: string }) {
       <div className="crumbs">
         <a href={routeHash({ view: 'overview' })}>← Overview</a>
         <span className="sep">/</span>
-        <span className="mono">
-          {detail?.source !== undefined && detail.source !== 'claude'
-            ? projectId
-            : (detail?.path ?? projectId)}
-        </span>
+        <span className="mono">{detail?.path ?? projectId}</span>
       </div>
       <div className="chathead">
-        {/* Codex グループの主ラベルは日付（グループ ID）。cwd 末尾にしない（SPEC-DASH-087） */}
-        <span className="t">
-          {detail?.source !== undefined && detail.source !== 'claude'
-            ? projectId
-            : (detail?.path?.split('/').at(-1) ?? projectId)}
-        </span>
+        {/* 主ラベルはソース不問で cwd 末尾。path の無いグループは id（SPEC-DASH-087） */}
+        <span className="t">{detail?.path?.split('/').at(-1) ?? projectId}</span>
         {detail !== undefined && <SourceBadge source={detail.source} />}
         <span className="badge">{detail?.sessions.length ?? '…'} セッション</span>
         <span className="badge">{formatTokens(totalTokensAll)} tok</span>

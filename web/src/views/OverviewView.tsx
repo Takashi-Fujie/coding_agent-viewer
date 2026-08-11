@@ -301,8 +301,8 @@ export function OverviewView() {
                   }}
                 >
                   <td>
-                    {/* Codex グループは cwd 末尾だと Claude と見分けが付かないため日付を主ラベルにする（SPEC-DASH-087） */}
-                    <b>{p.source === 'claude' ? (basename(p.path) ?? p.id) : p.id}</b>
+                    {/* 行ラベルはソース不問で cwd 末尾。path の無いグループ（cwd 欠損の日付フォールバック等）は id（SPEC-DASH-087） */}
+                    <b>{basename(p.path) ?? p.id}</b>
                     <SourceBadge source={p.source} />
                     {p.path !== null && <span className="pmeta mono">{p.path}</span>}
                   </td>

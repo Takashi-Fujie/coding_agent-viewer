@@ -20,32 +20,31 @@ test('SPEC-DASH-090: 切替で「Codex」を選ぶと Overview が Codex グル�
   page,
 }) => {
   await page.goto('/');
-  const day = codexDayId();
-  // 全ソース: Claude プロジェクトと Codex グループが並ぶ
+  // 全ソース: Claude プロジェクトと Codex グループ（cwd 末尾ラベル。#45）が並ぶ
   await expect(page.locator(table)).toContainText('sample-project');
-  await expect(page.locator(table)).toContainText(day);
+  await expect(page.locator(table)).toContainText('sample-codex');
   const allCost = await page.getByTestId('tile-cost').textContent();
 
   await page.locator(nav).getByRole('button', { name: 'Codex' }).click();
   await expect(page.locator(table)).not.toContainText('sample-project');
-  await expect(page.locator(table)).toContainText(day);
+  await expect(page.locator(table)).toContainText('sample-codex');
 
   await page.locator(nav).getByRole('button', { name: 'Claude' }).click();
   await expect(page.locator(table)).toContainText('sample-project');
-  await expect(page.locator(table)).not.toContainText(day);
+  await expect(page.locator(table)).not.toContainText('sample-codex');
   // Codex は usage 未集計（0）なので、Claude のみの総コストは全ソースと一致する
   await expect(page.getByTestId('tile-cost')).toHaveText(allCost ?? '');
 });
 
-test('SPEC-DASH-091: Codex グループの行にソースバッジと日付ラベルが描画される', async ({ page }) => {
+test('SPEC-DASH-091: Codex グループの行にソースバッジと cwd 末尾ラベルが描画される', async ({ page }) => {
   await page.goto('/');
   const day = codexDayId();
 
-  const row = page.locator(`${table} tbody tr`, { hasText: day });
-  await expect(row.locator('b', { hasText: day })).toBeVisible();
+  const row = page.locator(`${table} tbody tr`, { hasText: 'sample-codex' });
+  await expect(row.locator('b', { hasText: 'sample-codex' })).toBeVisible();
   await expect(row.locator('.badge.src')).toHaveText('Codex');
-  // cwd 末尾（sample-codex）を主ラベルにしない
-  await expect(row.locator('b', { hasText: 'sample-codex' })).toHaveCount(0);
+  // 日付を主ラベルにしない（#45 改定。旧: 日付ラベル）
+  await expect(row.locator('b', { hasText: day })).toHaveCount(0);
 });
 
 test('SPEC-DASH-092: 日付クリック絞り込みで usage 0 の Codex セッションが一覧に残る', async ({
@@ -53,16 +52,16 @@ test('SPEC-DASH-092: 日付クリック絞り込みで usage 0 の Codex セッ�
 }) => {
   await page.goto('/');
   const day = codexDayId();
-  await expect(page.locator(table)).toContainText(day);
+  await expect(page.locator(table)).toContainText('sample-codex');
 
   await page.getByTestId(`band-${day}`).click();
   await expect(page.getByTestId('day-chip')).toBeVisible();
 
   // usage 0 の Codex グループが「その日に活動した」一覧に残る
-  await expect(page.locator(table)).toContainText(day);
-  await expect(page.locator(`${table} tbody tr`, { hasText: day }).locator('.badge.src')).toHaveText(
-    'Codex',
-  );
+  await expect(page.locator(table)).toContainText('sample-codex');
+  await expect(
+    page.locator(`${table} tbody tr`, { hasText: 'sample-codex' }).locator('.badge.src'),
+  ).toHaveText('Codex');
 });
 
 test('SPEC-DASH-093: Codex セッションが無い seed では「Codex」選択肢が disabled 表示になる', async ({

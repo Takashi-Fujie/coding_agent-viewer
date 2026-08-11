@@ -367,3 +367,69 @@ model が undefined の usage レコードは、summary では `(unknown)` キ�
 - Codex ソース 90 日集計: 48.1M tokens / $38.20（gpt-5.6-sol 32.7M・gpt-5.6-terra 15.4M。モデル別内訳の合計 = 総トークンで一致）
 - token_count が 1 行も無いセッション（2026-06-27 等）は仕様どおり「未集計」表示のまま
 - Claude 側集計は変更前後で不変（verify 全 pass・report 照合 OK）
+
+---
+
+# セッションのプロジェクト（cwd）グルーピング（Issue #45）
+
+基本仕様は [docs/spec/CODEX.md](../spec/CODEX.md) の同名セクション。承認事項 2 点は 2026-08-11 オーナー裁定済み（worktree 統合を Codex にも適用・cwd 欠損は日付グループへフォールバック）。
+
+## 実装方針（store 層での再グルーピング）
+
+発見層（`server/sources/codex.ts` の `discoverGroups`）は**変更しない**。日付グループでの発見（SPEC-CORE-074）は中間表現として存続し、`server/store.ts` の `loadSnapshot` がインデックス構築後・worktree 統合前に Codex セッションを cwd で再グルーピングする。
+
+- **cwd の出所は `summary.cwd`**。#29 の走査文脈（session_meta / turn_context の cwd → 後続レコードへ引き継ぎ、`summary.cwd ??=` で最初のレコード生成時点の値が入る）を使うため、**追加のファイル I/O はゼロ**。発見層で先頭行を読む案は、インデクサと二重読みになるため棄却
+- 帰属は first-wins（実質 session_meta の cwd）。ターン途中で `turn_context.cwd` が変わっても所属グループは変わらない（1 セッション 1 グループ）
+- **グループ id は `codex:` + cwd の非英数字 `-` 置換**（例: `codex:-Users-x-proj`）。cwd 由来の縮約形は Claude の id と構造的に衝突するため、#31 で記録した判断「形式が重なる新ソースはグループ ID にも接頭辞を導入する」（本書 DASH 側）に従い接頭辞を付ける。セッション id の `codex:` 前置と同じ規約
+- `summary.cwd` が undefined / 空のセッションは**元の日付グループ（`YYYY-MM-DD`）に残す**。旧日付グループの id は cwd を持つセッションが抜けた分だけ消え、`/api/projects/:id` は 404 になる（SPEC-CORE-089 と同じ扱い）
+- 再グルーピング後の Codex グループの並びは **id 昇順**（Claude が名前順であるのと揃える。日付フォールバックグループも同列で昇順に混ざる）。ソース間の並び（claude 群 → codex 群）は従来どおり登録順
+- `sessionsById` はエントリ参照を共有しているため `projectId` の書き換えのみで追随する
+
+## worktree 統合の拡張（SPEC-CORE-090 改定）
+
+`consolidateWorktrees` の対象を `sourceId === 'claude'` 限定から **claude + codex** に広げる。
+
+- cwd グループは全セッション同一 cwd のため、既存の `representativeCwd`（最新セッションの cwd）がそのまま正しく働く。日付フォールバックグループは cwd が無く `representativeCwd` が null → 自動的に対象外
+- 併合先の解決（`targetByRoot`）は**ソース別に引く**（キーを root 単体から `sourceId + root` に変える）。同じ本体ルートでも Claude グループと Codex グループは併合しない（1 グループ 1 ソースの維持）
+- 本体グループが無い場合の合成 id（SPEC-CORE-086 相当）は、codex では `codex:` + 本体ルートの縮約形にする
+
+## UI（行ラベル・SPEC-DASH-087 改定）
+
+- `OverviewView.tsx` の行ラベル分岐 `source === 'claude' ? basename(path) : id` を廃し、**ソース不問で `basename(path) ?? id`** にする。cwd 欠損の日付フォールバックグループは path が null のため従来どおり id（日付）が出る
+- `SessionListView.tsx` のヘッダ・パンくずの同種分岐（`source !== 'claude'` で id 表示）も同様に揃える
+- ソースバッジ・未集計表示・日付クリック絞り込み（SPEC-DASH-088〜089）は変更しない
+
+## 既存 SPEC の改定
+
+| ID | 改定内容 |
+|---|---|
+| `SPEC-CORE-090`（docs/design/CORE.md） | 「Codex は併合対象にしない」→「Codex グループも併合対象。併合先はソース内でのみ解決する」。対応テストも書き換え |
+| `SPEC-DASH-087`（docs/design/DASH.md） | 「Codex の行ラベルは日付」→「行ラベルはソース不問で cwd 末尾 basename（path 無しは id）」。対応テストも書き換え |
+| `SPEC-CORE-074` | 改定しない（発見層の日付グループは中間表現として存続） |
+
+## 受け入れ基準
+
+### 再グルーピング（server/store.ts）
+
+- [x] `SPEC-CODEX-100` codex セッションは summary.cwd 単位のグループに再編され、グループ id は `codex:` + cwd の非英数字 `-` 置換になる
+- [x] `SPEC-CODEX-101` 別の日付ディレクトリにある同一 cwd のセッションが 1 グループにまとまり、codex グループの並びは id 昇順になる
+- [x] `SPEC-CODEX-102` summary.cwd の無いセッションは元の日付グループに残って表示され続ける
+- [x] `SPEC-CODEX-103` cwd を持つセッションが抜けた旧日付グループの id は一覧に現れず、/api/projects/:id は 404 になる
+- [x] `SPEC-CODEX-104` cwd が worktree のセッションは本体ルートの codex グループへ併合され、worktree ラベルが付く（SPEC-CORE-090 改定）
+- [x] `SPEC-CODEX-105` worktree 併合で本体グループが無い場合は `codex:` 接頭辞付きの合成 id になり、同じ本体ルートの claude グループとは併合されない
+
+### UI（web）
+
+- [x] `SPEC-CODEX-106` codex グループの行ラベルが cwd 末尾の basename になり、path の無いグループは id 表示になる（SPEC-DASH-087 改定）
+
+### 回帰
+
+- [x] `SPEC-CODEX-107` claude ソースの一覧・グルーピング・集計は従来と一致する（既存テスト不変）
+
+## 実測（#45・2026-08-11）
+
+- 実ログの Codex グループ: 日付 21 グループ → cwd 16 グループに再編。日付フォールバックは 0 件（全セッションが summary.cwd を持つ）
+- worktree 統合の実例: agent_viewer の worktree（`.claude/worktrees/` 配下）で実行した Codex 2 セッションが本体ルートの codex グループへ統合され、worktree ラベルが付いた
+- 旧日付グループの URL（`/api/projects/2026-08-10` 等）は 404
+- Claude 側の一覧・集計は変更前後で不変（verify 全 pass・report 照合 OK・spec:check 乖離なし）
+- 既知の制約: cwd の `-` 縮約は非可逆のため、非 ASCII 名のディレクトリ同士は理論上 id が衝突しうる（claude の既存 id 規約から継承した性質。ラベル・パス表示は cwd 原文を使うため影響しない）

@@ -94,7 +94,7 @@ function resolveRepo(cwd: string): Promise<RepoResolution | null>;
 
 ### 併合（loadSnapshot の後段）
 
-- 併合は **claude ソースのグループのみ**対象（Codex は日付グループで cwd ベースでないため対象外）
+- 併合は claude / codex 両ソースのグループが対象（#45 改定。#41 時点では「claude のみ。Codex は日付グループで cwd ベースでないため対象外」だったが、#45 の cwd グルーピングで同条件になった）。**併合先の解決はソース内に閉じる**（同じ本体ルートでも claude と codex のグループは併合しない。1 グループ 1 ソースの維持）
 - 発見・インデックス化の後、プロジェクトごとに代表 cwd（最新セッションの `summary.cwd`）で `resolveRepo` を呼ぶ（同一プロジェクト内のセッションは同じ起動 cwd を共有するため代表 1 回で足りる。cwd ごとにメモ化）
 - `worktreeRoot` が得られたプロジェクトを、本体ルートが代表 cwd と一致するプロジェクト（= 本体）へ併合する。併合後の id は**本体プロジェクトの従来 id**。本体プロジェクトが存在しない場合は、本体ルートの `[^A-Za-z0-9]` を `-` に置換した同形式の id を合成する
 - 併合したセッションの `projectId` は併合先 id に書き換え、`sessionsById` も併合後の値で引けるようにする。旧 worktree グループの id は projects 一覧から消える（`/api/projects/:id` は既存の 404 挙動に落ちる）
@@ -200,7 +200,7 @@ function resolveRepo(cwd: string): Promise<RepoResolution | null>;
 - [x] `SPEC-CORE-087` 併合後のセッションは projectId が併合先になり、worktree ラベル（実在時は worktree ルート名・削除後は cwd 名）を持ち、本体セッションは null を持つ
 - [x] `SPEC-CORE-088` 併合後のプロジェクトの表示パスは本体ルートになる（worktree セッションが最新でも worktree パスにしない）
 - [x] `SPEC-CORE-089` 旧 worktree グループの id は projects 一覧に現れない（/api/projects/:id は 404 になる）
-- [x] `SPEC-CORE-090` Codex ソースのグループは併合対象にしない
+- [x] `SPEC-CORE-090` worktree 併合の併合先はソース内でのみ解決され、同じ本体ルートでも claude と codex のグループは併合されない（#45 改定。旧: Codex ソースのグループは併合対象にしない）
 
 ### 実測値照合レポート（Issue #4・`scripts/report.ts`）
 

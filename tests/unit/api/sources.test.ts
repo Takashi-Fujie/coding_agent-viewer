@@ -15,7 +15,8 @@ import { assistantLine, writeJsonl } from '../../helpers/fixtures.js';
 
 const PROJECT_CLAUDE = '-home-dev-sample-project';
 const SESSION_CLAUDE = 's0000000-0000-4000-8000-0000000000s1';
-const CODEX_GROUP = '2026-02-02';
+// cwd グルーピング（#45）後のグループ id: codex: + cwd の非英数字 - 置換
+const CODEX_GROUP = 'codex:-home-user-synthetic-project';
 const CODEX_ROLLOUT = 'rollout-2026-02-02T00-00-00-00000000-0000-7000-8000-0000000000c1';
 const SESSION_CODEX = `codex:${CODEX_ROLLOUT}`;
 
@@ -179,7 +180,8 @@ describe('DTO の source / records', () => {
 
   it('SPEC-DASH-084: 一覧の各行は範囲フィルタ後のレコード件数 records を含む', async () => {
     // Codex の活動日（2026-02-02）に絞ると、Claude 行は records 0・Codex 行は records > 0 になる
-    const overview = await request(app).get('/api/overview').query({ from: CODEX_GROUP, to: CODEX_GROUP });
+    const codexDay = '2026-02-02';
+    const overview = await request(app).get('/api/overview').query({ from: codexDay, to: codexDay });
     const rows = new Map(
       overview.body.projects.map((p: { id: string; records: number }) => [p.id, p.records]),
     );
@@ -188,7 +190,7 @@ describe('DTO の source / records', () => {
 
     const project = await request(app)
       .get(`/api/projects/${CODEX_GROUP}`)
-      .query({ from: CODEX_GROUP, to: CODEX_GROUP });
+      .query({ from: codexDay, to: codexDay });
     expect(project.body.sessions[0].records).toBeGreaterThan(0);
     // usage 未集計でもレコード件数で「その日の活動」が判定できる（日別絞り込みの基準）
     expect(project.body.sessions[0].totalTokens).toBe(0);
