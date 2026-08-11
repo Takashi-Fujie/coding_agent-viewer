@@ -5,6 +5,8 @@ import { expect, test } from '@playwright/test';
 import {
   E2E_PROJECT_ID,
   E2E_PROJECT_PATH,
+  LONG_TURNS,
+  SESSION_LONG,
   SESSION_MAIN,
   SESSION_SAMPLE,
 } from './support/env.js';
@@ -73,4 +75,24 @@ test('SPEC-CHAT-074: 巨大行（50KB 超）を含むセッションの分析画
   await page.goto(sessionUrl(SESSION_SAMPLE));
   await expect(page.getByText('サンプルの依頼文。')).toBeVisible();
   await expect(page.locator('.chathead')).toContainText('合計');
+});
+
+test('SPEC-CHAT-075: 画面に収まらない行数のセッションで、.appmain を末尾までスクロールすると最後の行が描画される', async ({
+  page,
+}) => {
+  await page.goto(sessionUrl(SESSION_LONG));
+  await expect(page.getByText('長いセッションの依頼 1', { exact: true })).toBeVisible();
+
+  // 末尾の行は初期ビューポートの描画範囲外（仮想化されているため DOM に無い）
+  const last = page.getByText(`長いセッションの応答 ${String(LONG_TURNS)}`, { exact: true });
+  await expect(last).not.toBeVisible();
+
+  // 行の実測（measureElement）で総高さが伸びるため、1 回の scrollTop 代入では
+  // 末尾に届かないことがある。末尾行が見えるまでスクロールを繰り返す
+  await expect(async () => {
+    await page.locator('.appmain').evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await expect(last).toBeVisible({ timeout: 500 });
+  }).toPass({ timeout: 10_000 });
 });

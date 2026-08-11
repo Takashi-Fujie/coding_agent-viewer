@@ -20,7 +20,7 @@ import type { MessageBody, MessageMeta, SessionDetail, SessionSummary } from '..
 // jsdom にはレイアウトが無く仮想スクロールが行を描画しないため、全行を素通しで
 // 描画する代役に差し替える。実ブラウザの仮想化は E2E（SPEC-LIVE-066〜068）が受け持つ。
 vi.mock('@tanstack/react-virtual', () => ({
-  useWindowVirtualizer: (opts: { count: number }) => ({
+  useVirtualizer: (opts: { count: number }) => ({
     getTotalSize: () => opts.count * 96,
     getVirtualItems: () =>
       Array.from({ length: opts.count }, (_, index) => ({ key: index, index, start: index * 96 })),

@@ -28,6 +28,10 @@ export const SESSION_SAMPLE = 's0000000-0000-4000-8000-000000000001';
 export const SESSION_MAIN = 's0000000-0000-4000-8000-0000000000e1';
 /** ライブ更新テストが追記する専用セッション。 */
 export const SESSION_LIVE = 's0000000-0000-4000-8000-0000000000e2';
+/** 仮想スクロール追従テスト用の長いセッション（Issue #40）。 */
+export const SESSION_LONG = 's0000000-0000-4000-8000-0000000000e3';
+/** SESSION_LONG のメッセージ往復数（user + assistant で LONG_TURNS * 2 行）。 */
+export const LONG_TURNS = 40;
 
 export function sessionFilePath(sessionId: string): string {
   return join(E2E_LOG_DIR, E2E_PROJECT_ID, `${sessionId}.jsonl`);
