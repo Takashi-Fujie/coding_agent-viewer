@@ -40,6 +40,26 @@ function bump(counter: Record<string, number>, key: string | undefined): void {
   counter[key] = (counter[key] ?? 0) + 1;
 }
 
+/**
+ * usage の合算は kind 不問（SPEC-CODEX-091）。Codex の token_count 増分レコードは
+ * kind system で usage を持つ。messages / assistantCount のカウントは assistant のみ。
+ */
+function accumulateUsage(summary: SessionSummary, record: IndexRecord): void {
+  const usage = record.usage;
+  if (!usage) return;
+
+  const model = record.model ?? '(unknown)';
+  const totals = (summary.models[model] ??= emptyTotals());
+  totals.input += usage.input;
+  totals.output += usage.output;
+  totals.cacheRead += usage.cacheRead;
+  totals.cacheCreation += usage.cacheCreation;
+  totals.cacheCreation5m += usage.cacheCreation5m;
+  totals.cacheCreation1h += usage.cacheCreation1h;
+  totals.webSearch += usage.webSearch;
+  totals.webFetch += usage.webFetch;
+}
+
 function accumulateAssistant(summary: SessionSummary, record: IndexRecord): void {
   summary.assistantCount += 1;
   if (record.synthetic) summary.syntheticCount += 1;
@@ -47,18 +67,6 @@ function accumulateAssistant(summary: SessionSummary, record: IndexRecord): void
   const model = record.model ?? '(unknown)';
   const totals = (summary.models[model] ??= emptyTotals());
   totals.messages += 1;
-
-  const usage = record.usage;
-  if (usage) {
-    totals.input += usage.input;
-    totals.output += usage.output;
-    totals.cacheRead += usage.cacheRead;
-    totals.cacheCreation += usage.cacheCreation;
-    totals.cacheCreation5m += usage.cacheCreation5m;
-    totals.cacheCreation1h += usage.cacheCreation1h;
-    totals.webSearch += usage.webSearch;
-    totals.webFetch += usage.webFetch;
-  }
 
   for (const toolUse of record.toolUses ?? []) {
     bump(summary.toolUseCounts, toolUse.name);
@@ -71,6 +79,7 @@ function accumulateAssistant(summary: SessionSummary, record: IndexRecord): void
 export function addToSummary(summary: SessionSummary, record: IndexRecord): void {
   summary.recordCount += 1;
   if (record.isSidechain) summary.sidechainCount += 1;
+  accumulateUsage(summary, record);
 
   summary.sessionId ??= record.sessionId;
   summary.cwd ??= record.cwd;

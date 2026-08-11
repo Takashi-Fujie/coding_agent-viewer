@@ -257,3 +257,62 @@ describe('集計', () => {
     expect(summary.currency).toBe('USD');
   });
 });
+
+describe('Codex（OpenAI）モデル対応（Issue #30）', () => {
+  const record = (over: Partial<IndexRecord>): IndexRecord => ({
+    offset: 0,
+    length: 1,
+    type: 'assistant',
+    kind: 'assistant',
+    usage: usage({ input: 1_000_000 }),
+    ...over,
+  });
+
+  /** cached input の割引率がモデルごとに異なるケース（o3 相当: input の 0.25 倍）。 */
+  const codexTable: PriceTable = {
+    ...table,
+    models: {
+      ...table.models,
+      'sample-cache-explicit': { input: 2, output: 8, cacheRead: 0.5 },
+    },
+  };
+
+  it('SPEC-COST-050: モデル単位の cacheRead 明示単価が倍率導出より優先して適用される', () => {
+    const cost = estimateCost(
+      { model: 'sample-cache-explicit', usage: usage({ cacheRead: 1_000_000 }) },
+      codexTable,
+    );
+    // 倍率導出なら 2 × 0.1 = 0.2 だが、明示単価 0.5 を使う
+    expect(cost.cacheRead).toBeCloseTo(0.5, 10);
+  });
+
+  it('SPEC-COST-051: cacheRead 明示単価の無いモデルは従来どおり input 単価 × read 倍率で計算される（既存結果不変）', () => {
+    const cost = estimateCost(
+      { model: 'sample-basic', usage: usage({ cacheRead: 1_000_000 }) },
+      codexTable,
+    );
+    expect(cost.cacheRead).toBeCloseTo(1, 10); // 10 × 0.1
+  });
+
+  it('SPEC-COST-052: 価格表に出典確認済みの Codex モデルが載り、未確認の観測モデルは unknownModel 警告になる', async () => {
+    const loaded = await loadPriceTable(DEFAULT_PRICE_TABLE_PATH);
+
+    // OpenAI 公式価格ページ（2026-08-10 確認）で単価が取れたモデル
+    expect(loaded.models['gpt-5.5']).toMatchObject({ input: 5, output: 30 });
+    expect(loaded.models['gpt-5.4-mini']).toMatchObject({ input: 0.75, output: 4.5 });
+    expect(loaded.models['gpt-5.3-codex']).toMatchObject({ input: 1.75, output: 14 });
+    expect(loaded.models['o3']).toMatchObject({ input: 2, output: 8, cacheRead: 0.5 });
+    expect(loaded.models['gpt-5.6-sol']).toMatchObject({ input: 5, output: 30 });
+    expect(loaded.models['gpt-5.6-terra']).toMatchObject({ input: 2, output: 12 });
+    expect(loaded.source).toContain('OpenAI');
+
+    // 公式ページに無い観測モデルは推測で埋めず unknownModel 警告に回す
+    expect(loaded.models['gpt-5-codex']).toBeUndefined();
+    expect(loaded.models['gpt-5.1-codex']).toBeUndefined();
+    const summary = estimateRecordsCost(
+      [record({ model: 'gpt-5-codex' }), record({ model: 'gpt-5.1-codex' })],
+      loaded,
+    );
+    expect(summary.unknownModels).toEqual(['gpt-5-codex', 'gpt-5.1-codex']);
+  });
+});

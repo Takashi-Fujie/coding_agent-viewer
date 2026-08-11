@@ -12,8 +12,18 @@
  */
 import { truncatePreview } from '../core/normalize.js';
 import type { BodyBlock, MessageBody } from '../core/normalize.js';
-import type { IndexRecord, RecordLocation } from '../core/types.js';
+import type { IndexRecord, NormalizedUsage, RecordLocation } from '../core/types.js';
 import type { RecordNormalizer } from './types.js';
+
+/**
+ * token_count の累積値（total_token_usage）。usage 会計はこの累積値の「増分」で
+ * 確定させる（last_token_usage は同一累積値の重複記録で多重計上するため読まない）。
+ */
+interface CumulativeUsage {
+  input: number;
+  cachedInput: number;
+  output: number;
+}
 
 /** 増分再開のためにキャッシュへ保存する走査文脈。フィールドは最小限に保つ。 */
 interface CodexScanState {
@@ -26,6 +36,11 @@ interface CodexScanState {
   turnStartedAt?: string | undefined;
   /** 正本（function_call 等）で見た call_id。対応する *_end を捨てるための照合キー。 */
   toolCallIds: string[];
+  /**
+   * 直近の token_count 累積値（会計 epoch の基準）。これが無い旧キャッシュ（v4）から
+   * 増分再開すると累積値を全額計上してしまうため、INDEX_SCHEMA_VERSION 5 で全再構築させる。
+   */
+  prevUsage?: CumulativeUsage | undefined;
 }
 
 /** 自動注入と判定する本文先頭パターン（実測: 注入 77 件中 73 件を判別）。 */
@@ -36,12 +51,11 @@ const AGENTS_MD_PREFIX = '# AGENTS.md instructions for ';
 const TOOL_CALL_TYPES = new Set(['function_call', 'custom_tool_call', 'tool_search_call']);
 const TOOL_OUTPUT_TYPES = new Set(['function_call_output', 'custom_tool_call_output', 'tool_search_output']);
 
-/** レコードを生成しない event_msg（複製・usage・メタ）。token_count は #30 で扱う。 */
+/** レコードを生成しない event_msg（複製・メタ）。token_count は usage 会計（#30）で別処理。 */
 const DROPPED_EVENT_TYPES = new Set([
   'agent_message',
   'agent_reasoning',
   'user_message',
-  'token_count',
   'thread_settings_applied',
 ]);
 
@@ -85,6 +99,33 @@ function durationBetween(start: string | undefined, end: string | undefined): nu
   return Number.isFinite(from) && Number.isFinite(to) ? to - from : undefined;
 }
 
+/** 欠損・不正値を 0 とみなす（未知の usage 形でも会計を落とさない）。 */
+function toCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/** token_count の payload から累積値を読む。info が無い・オブジェクトでなければ undefined。 */
+function readCumulative(payload: Record<string, unknown>): CumulativeUsage | undefined {
+  const info = asObject(payload['info']);
+  if (!info) return undefined;
+  const total = asObject(info['total_token_usage']) ?? {};
+  return {
+    input: toCount(total['input_tokens']),
+    cachedInput: toCount(total['cached_input_tokens']),
+    output: toCount(total['output_tokens']),
+  };
+}
+
+function restorePrevUsage(value: unknown): CumulativeUsage | undefined {
+  const obj = asObject(value);
+  if (!obj) return undefined;
+  return {
+    input: toCount(obj['input']),
+    cachedInput: toCount(obj['cachedInput']),
+    output: toCount(obj['output']),
+  };
+}
+
 function restoreState(state: unknown): CodexScanState {
   const obj = asObject(state);
   const ids = Array.isArray(obj?.['toolCallIds'])
@@ -97,6 +138,7 @@ function restoreState(state: unknown): CodexScanState {
     model: asString(obj?.['model']),
     turnStartedAt: asString(obj?.['turnStartedAt']),
     toolCallIds: ids,
+    prevUsage: restorePrevUsage(obj?.['prevUsage']),
   };
 }
 
@@ -208,6 +250,54 @@ export function createCodexNormalizer(state?: unknown): RecordNormalizer {
     const payloadType = asString(payload['type']) ?? '';
 
     if (DROPPED_EVENT_TYPES.has(payloadType)) return null;
+
+    if (payloadType === 'token_count') {
+      // usage 会計（#30）: セッション累積値の増分だけを計上する。
+      // rate_limits は課金と無関係、last_token_usage は重複記録で多重計上するため読まない。
+      const cumulative = readCumulative(payload);
+      if (!cumulative) return null; // info: null・不正形は状態を変えずスキップ
+
+      const prev = ctx.prevUsage ?? { input: 0, cachedInput: 0, output: 0 };
+      ctx.prevUsage = cumulative;
+
+      // 減少 = reset / compaction / resume 巻き戻り。会計 epoch を切り替え、
+      // この行は計上せず新基準から数える（過大計上より過小計上に倒す。オーナー裁定・案 B）。
+      if (
+        cumulative.input < prev.input ||
+        cumulative.cachedInput < prev.cachedInput ||
+        cumulative.output < prev.output
+      ) {
+        return null;
+      }
+
+      const deltaInput = cumulative.input - prev.input;
+      const deltaCached = cumulative.cachedInput - prev.cachedInput;
+      const deltaOutput = cumulative.output - prev.output;
+      if (deltaInput === 0 && deltaOutput === 0) return null; // 同一累積値の重複記録
+
+      // cached は input の内数（実測契約）。増分単位では逆転し得るので負にクランプする。
+      // reasoning は output の内数なので別掲しない。cache write 相当は Codex に未観測。
+      const usage: NormalizedUsage = {
+        input: Math.max(0, deltaInput - deltaCached),
+        output: deltaOutput,
+        cacheRead: deltaCached,
+        cacheCreation: 0,
+        cacheCreation5m: 0,
+        cacheCreation1h: 0,
+        webSearch: 0,
+        webFetch: 0,
+      };
+      // kind system + subtype token_count は viewer のメイン列に出ない
+      // （system の表示条件は compact_boundary か durationMs 有りのみ）。
+      return {
+        ...common(raw, location),
+        type: payloadType,
+        kind: 'system',
+        subtype: payloadType,
+        model: ctx.model,
+        usage,
+      };
+    }
 
     if (payloadType === 'task_started') {
       ctx.turnStartedAt = asString(raw['timestamp']);

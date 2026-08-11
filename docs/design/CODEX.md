@@ -109,6 +109,7 @@ user content はテキストのみでなく画像（`input_image` 等の content
 
 - compaction 時の累積リセット有無（compaction 系の payload.type 自体が未観測）
 - cache **write** 系フィールドの有無（観測フィールドは input / cached_input / output / reasoning_output / total のみ。Anthropic の cache_creation に相当する概念は現れていない）
+  - **#30 追記（2026-08-10）**: 旧ログ（2026-07-24・07-31）に `cache_write_input_tokens` フィールドの存在を確認。ただし**観測値は全行 0**。非 0 の意味論（input の内数か・課金対象か）が未確定のため、#30 では計上しない契約を維持する
 - `last_token_usage` の厳密な意味（「直近 API 応答」説が濃厚だが、ストリーミング中の途中値かは未確定）
 - 途中終了ターンの usage が累積に反映されるか
 
@@ -219,7 +220,7 @@ CORE.md（#28）で予告した「ソースごとの normalize の差し込み�
 | `response_item` function_call / custom_tool_call / tool_search_call | kind `assistant`・model=文脈・toolUses=[{id: call_id, name}]・preview=名前と引数冒頭 |
 | `response_item` function_call_output / custom_tool_call_output / tool_search_output | kind `user`・isToolResult=true・toolResultFor=call_id・preview=出力冒頭 |
 | `event_msg` agent_message / agent_reasoning / user_message | レコード無し（response_item の複製・注入通知） |
-| `event_msg` token_count | レコード無し（#30 で扱う） |
+| `event_msg` token_count | #29 ではレコード無し → **#30 で usage 増分レコード**（下記「usage 会計・コスト」） |
 | `event_msg` task_started | レコード無し（文脈更新のみ） |
 | `event_msg` task_complete | kind `system`・subtype=`task_complete`・durationMs=task_started との差（欠損時は undefined） |
 | `event_msg` error | kind `system`・subtype=`error`・preview=メッセージ |
@@ -254,7 +255,7 @@ viewer 側は無変更で成立する（実装済みの規約に乗る）: attac
 - [x] `SPEC-CODEX-055` reasoning は kind assistant・hasThinking=true になる
 - [x] `SPEC-CODEX-056` function_call / custom_tool_call / tool_search_call は kind assistant になり toolUses に call_id と name を持つ
 - [x] `SPEC-CODEX-057` function_call_output / custom_tool_call_output / tool_search_output は kind user・isToolResult=true・toolResultFor=call_id になる
-- [x] `SPEC-CODEX-058` event_msg の agent_message / agent_reasoning / user_message / token_count はレコードを生成しない
+- [x] `SPEC-CODEX-058` event_msg の agent_message / agent_reasoning / user_message はレコードを生成しない（token_count は #30 の usage 会計で扱う）
 - [x] `SPEC-CODEX-059` call_id が正本と結ばれる *_end はレコードを生成せず、結ばれない *_end は kind user・isToolResult の独立レコードになる
 - [x] `SPEC-CODEX-060` session_meta / turn_context / world_state / thread_settings_applied はレコードを生成せず、sessionId・cwd・version が後続レコードへ引き継がれる
 - [x] `SPEC-CODEX-061` task_complete は kind system になり task_started からの durationMs を持つ（timestamp 欠損時は durationMs 無しで生成する）
@@ -276,3 +277,93 @@ viewer 側は無変更で成立する（実装済みの規約に乗る）: attac
 - [x] `SPEC-CODEX-068` codexSessionsDir 指定時のみ Codex ソースが登録され、GET /api/sessions/:id/messages で Codex セッションの本文が返る
 - [x] `SPEC-CODEX-069` Codex 正規化レコードは既存の行構築（buildRows）で user / assistant / ツール呼び出し＋結果がメイン列に成立し、注入・developer はメイン列に出ない
 - [x] `SPEC-CODEX-070` Claude ソースの正規化結果・API レスポンスは従来と一致する（既存テスト不変）
+
+---
+
+# usage 会計・コスト（Issue #30）
+
+`event_msg:token_count` の累積値を差分化し、既存の加算可能な `NormalizedUsage` に落とす。基本仕様書の承認事項（2026-08-10 裁定）: **epoch 切替は案 B（減少行は計上せず基準更新）**・**集計対象は「usage を持つレコード（kind 不問）」へ拡張（messages カウントは assistant のみ）**。
+
+## 会計状態機械（codex-normalize 内・CodexScanState 拡張）
+
+`CodexScanState` に前回累積値を追加する（増分再開のためキャッシュへ直列化される）:
+
+| フィールド | 内容 |
+|---|---|
+| `prevUsage` | 直近の `total_token_usage` の値 `{input, cachedInput, output, reasoningOutput, total}`。未観測なら undefined（基準 0） |
+
+`token_count` 行の処理:
+
+1. `payload.info` がオブジェクトでない（`info: null` 含む）→ 状態を変えずスキップ（レコード無し）
+2. `info.total_token_usage` から累積値を読む（欠損フィールドは 0）
+3. **減少検知**: いずれかの成分が前回値より小さい → epoch 切替。**この行は計上せず** `prevUsage` を現在値に更新して終わり（案 B）
+4. 増分 = 現在値 − 前回値（成分ごと）。`prevUsage` を現在値に更新
+5. 増分の total が 0（同一累積値の重複記録）→ レコード無し
+6. usage 付きレコードを生成する（下記）
+
+## usage レコード（token_count 増分 → IndexRecord）
+
+| フィールド | 値 |
+|---|---|
+| `kind` / `type` / `subtype` | `system` / `token_count` / `token_count`（viewer の system 表示条件は subtype=compact_boundary か durationMs 有りのみ。実コード `web/src/lib/thread.ts` で確認済み → メイン列に出ない） |
+| `model` | 増分発生時点の `ctx.model`（turn_context 前は undefined のまま） |
+| `usage.input` | `max(0, Δinput − ΔcachedInput)`（cached は input の内数。負クランプ） |
+| `usage.cacheRead` | `ΔcachedInput` |
+| `usage.output` | `Δoutput`（reasoning は output の内数なので別掲しない。DTO に reasoning フィールドを生やさない） |
+| `usage.cacheCreation*` / `webSearch` / `webFetch` | 0（Codex に cache write 相当は未観測。現れても計上しない） |
+| `timestamp` / `sessionId` / `cwd` / `version` | 共通メタ（走査文脈から） |
+
+`last_token_usage` / `rate_limits` は読まない（多重計上・会計無関係）。
+
+## 集計対象の拡張（usage を持つレコード・kind 不問）
+
+Claude 側は usage が assistant にしか付かない（`server/core/normalize.ts` の付与箇所は assistant メッセージのみ・確認済み）ため、以下の変更で Claude の数値は変わらない。
+
+| 箇所 | 変更 |
+|---|---|
+| `server/core/summary.ts` | usage 合算を kind 不問にする（`models[model]` へ加算）。`messages` / `assistantCount` の加算は従来どおり kind assistant のみ |
+| `server/aggregate.ts` `isBillable` | `record.usage !== undefined` へ変更。`tokensByModel` の `messages += 1` は kind assistant のみに限定 |
+| `server/cost.ts` `estimateRecordsCost` | フィルタを `record.usage` 有りへ変更。`byModel[].messages += 1` は kind assistant のみに限定 |
+
+model が undefined の usage レコードは、summary では `(unknown)` キー、コストでは unknownModel 警告（既存挙動）に乗る。
+
+## キャッシュ互換
+
+`INDEX_SCHEMA_VERSION` を **5** に繰り上げる。v4 キャッシュの scanState には `prevUsage` が無く、増分再開時に基準 0 とみなして**再開後の最初の増分を全額（累積値まるごと）計上する多重計上事故**になるため、全再構築させる。
+
+## テスト・フィクスチャ
+
+- 既存フィクスチャが会計ケースを網羅済み: 1 ターン複数 token_count・同一累積値の重複（rollout-basic）、resume 継続・モデル切替・`info: null`（rollout-resume-switch）、未知モデル（rollout-edge）
+- **累積減少（epoch 切替）は確定契約（単調増加）と矛盾するため常設フィクスチャに置かず、テスト内生成の JSONL で検証する**
+- 増分 == 全再構築の同一性は SPEC-CODEX-066 と同じ手法（途中 offset で分割して再開）で検証する
+
+## 受け入れ基準（#30）
+
+### 会計状態機械
+
+- [x] `SPEC-CODEX-080` token_count の累積増分は usage 付き kind system（subtype token_count）レコードになり、増分 0 の行（同一累積値の重複記録）はレコードを生成しない
+- [x] `SPEC-CODEX-081` usage は input=Δinput−Δcached・cacheRead=Δcached・output=Δoutput となり、reasoning の別掲と cache write の計上をしない
+- [x] `SPEC-CODEX-082` Δcached が Δinput を上回る行でも input は負にならない（0 へクランプ）
+- [x] `SPEC-CODEX-083` 1 ターンに複数の token_count がある場合も、合計は累積最終値と一致する
+- [x] `SPEC-CODEX-084` resume（session_meta 再追記）後も基準が継続し、多重計上しない
+- [x] `SPEC-CODEX-085` モデル切替後の増分は切替後の turn_context.model に帰属し、切替前の増分は前モデルに残る
+- [x] `SPEC-CODEX-086` 最初の turn_context より前の増分は model undefined で計上され、コスト側で未知モデル警告になる
+- [x] `SPEC-CODEX-087` 累積値の減少を検知したら epoch を切り替え、その行は計上せず新しい基準から以後の増分を数える（案 B）
+- [x] `SPEC-CODEX-088` info が null・オブジェクトでない token_count は状態を変えずスキップする
+
+### 増分・キャッシュ
+
+- [x] `SPEC-CODEX-089` usage 会計を含む増分解析は全再構築と完全に同じ集計になる（prevUsage が scanState 経由で継続する）
+- [x] `SPEC-CODEX-090` INDEX_SCHEMA_VERSION の繰り上げ（5）により prevUsage の無い旧キャッシュは全再構築される
+
+### 集計統合
+
+- [x] `SPEC-CODEX-091` summary / aggregate / cost は usage を持つ非 assistant レコードを合算し、messages・assistantCount のカウントは assistant のみのまま変わらない
+- [x] `SPEC-CODEX-092` Claude ソースの集計値・コストは従来と一致する（既存テスト不変）
+
+## 実測（#30・2026-08-10）
+
+- 実ログ 2026-07-24 セッション: UI 表示 9.9M tokens / $7.38 — **token_count 最終累積値 9,949,790 と完全一致**（多重計上・取りこぼしなし）
+- Codex ソース 90 日集計: 48.1M tokens / $38.20（gpt-5.6-sol 32.7M・gpt-5.6-terra 15.4M。モデル別内訳の合計 = 総トークンで一致）
+- token_count が 1 行も無いセッション（2026-06-27 等）は仕様どおり「未集計」表示のまま
+- Claude 側集計は変更前後で不変（verify 全 pass・report 照合 OK）

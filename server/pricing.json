@@ -3,7 +3,7 @@
   "version": 1,
   "currency": "USD",
   "unit": "per_1m_tokens",
-  "source": "claude-api skill（2026-06-24 時点のキャッシュ）",
+  "source": "claude-api skill（2026-06-24 時点のキャッシュ）+ OpenAI 公式価格ページ（2026-08-10 確認）",
   "cacheMultipliers": {
     "read": 0.1,
     "write5m": 1.25,
@@ -26,6 +26,16 @@
       "intro": { "input": 2.0, "output": 10.0, "until": "2026-08-31" }
     },
     "claude-sonnet-4-6": { "input": 3.0, "output": 15.0 },
-    "claude-haiku-4-5": { "input": 1.0, "output": 5.0 }
+    "claude-haiku-4-5": { "input": 1.0, "output": 5.0 },
+    "gpt-5.5": { "input": 5.0, "output": 30.0 },
+    "gpt-5.4-mini": { "input": 0.75, "output": 4.5 },
+    "gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14.0,
+      "fast": { "input": 3.5, "output": 28.0 }
+    },
+    "o3": { "input": 2.0, "output": 8.0, "cacheRead": 0.5 },
+    "gpt-5.6-sol": { "input": 5.0, "output": 30.0 },
+    "gpt-5.6-terra": { "input": 2.0, "output": 12.0 }
   }
 }
