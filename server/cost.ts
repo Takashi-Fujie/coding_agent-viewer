@@ -31,6 +31,12 @@ export interface ModelPrice extends Rate {
   /** fast mode の単価。未定義のモデルで fast が来たら unknownRate を立てる。 */
   fast?: Rate | undefined;
   intro?: IntroRate | undefined;
+  /**
+   * cached input の明示単価（$/1M）。OpenAI は割引率がモデルごとに異なるため（例: o3 は
+   * input の 0.25 倍）、指定があれば input × cacheMultipliers.read の導出より優先する。
+   * fast / intro 適用時はその単価体系の倍率導出へ戻る（明示値は標準単価の実測値のため）。
+   */
+  cacheRead?: number | undefined;
 }
 
 export interface CacheMultipliers {
@@ -203,11 +209,16 @@ export function estimateCost(input: CostInput, table: PriceTable): CostBreakdown
   const write1hTokens = cacheSplitAssumed ? 0 : usage.cacheCreation1h;
 
   const { read, write5m, write1h } = table.cacheMultipliers;
+  // cached input は明示単価があれば優先する（SPEC-COST-050。fast / intro 適用時は倍率導出）。
+  const cacheReadPrice =
+    !fastApplied && !introApplied && price.cacheRead !== undefined
+      ? price.cacheRead
+      : rate.input * read;
   const breakdown: CostBreakdown = {
     model,
     input: amount(usage.input, rate.input),
     output: amount(usage.output, rate.output),
-    cacheRead: amount(usage.cacheRead, rate.input * read),
+    cacheRead: amount(usage.cacheRead, cacheReadPrice),
     cacheWrite5m: amount(write5mTokens, rate.input * write5m),
     cacheWrite1h: amount(write1hTokens, rate.input * write1h),
     total: 0,
@@ -241,14 +252,17 @@ const emptyModelCost = (): ModelCost => ({
   fastApplied: false,
 });
 
-/** レコード群を集計する。usage を持つ assistant レコードのみを対象にする。 */
+/**
+ * レコード群を集計する。usage を持つレコード（kind 不問）を対象にする（SPEC-CODEX-091）。
+ * messages のカウントだけは assistant に限る（Codex の usage 増分レコードを件数に数えない）。
+ */
 export function estimateRecordsCost(records: IndexRecord[], table: PriceTable): CostSummary {
   const byModel: Record<string, ModelCost> = {};
   const unknownModels = new Set<string>();
   let total = 0;
 
   for (const record of records) {
-    if (record.kind !== 'assistant' || !record.usage) continue;
+    if (!record.usage) continue;
 
     const cost = estimateCost(
       {
@@ -263,7 +277,7 @@ export function estimateRecordsCost(records: IndexRecord[], table: PriceTable): 
     if (cost.unknownModel) unknownModels.add(cost.model);
 
     const totals = (byModel[cost.model] ??= emptyModelCost());
-    totals.messages += 1;
+    if (record.kind === 'assistant') totals.messages += 1;
     totals.input += cost.input;
     totals.output += cost.output;
     totals.cacheRead += cost.cacheRead;

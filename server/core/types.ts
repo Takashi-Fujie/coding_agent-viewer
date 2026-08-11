@@ -15,8 +15,10 @@
  *    上げないと旧キャッシュのレコードが失敗 0 件・hook 履歴なしとして静かに欠損する。
  * 4: 走査文脈 scanState を追加（SPEC-CODEX-066/067）。上げないと scanState の無い旧
  *    キャッシュから増分再開したとき、Codex の model 関連付けが静かに失われる。
+ * 5: scanState に token_count の会計基準 prevUsage を追加（SPEC-CODEX-089/090）。上げないと
+ *    基準の無い旧キャッシュから増分再開したとき、累積値を全額計上する多重計上になる。
  */
-export const INDEX_SCHEMA_VERSION = 4;
+export const INDEX_SCHEMA_VERSION = 5;
 
 /** 走査で得られる生の 1 行。offset / length はバイト単位で、改行は length に含めない。 */
 export interface RawLine {

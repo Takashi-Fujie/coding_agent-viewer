@@ -152,12 +152,11 @@ describe('Codex レコード正規化', () => {
     expect(records[2]?.toolResultFor).toBe('call-003');
   });
 
-  it('SPEC-CODEX-058: event_msg の agent_message / agent_reasoning / user_message / token_count はレコードを生成しない', () => {
+  it('SPEC-CODEX-058: event_msg の agent_message / agent_reasoning / user_message はレコードを生成しない（token_count は #30 の usage 会計で扱う）', () => {
     const records = normalizeAll([
       { timestamp: at(2), type: 'event_msg', payload: { type: 'agent_message', message: '<synthetic> 応答' } },
       { timestamp: at(3), type: 'event_msg', payload: { type: 'agent_reasoning', text: '<synthetic>' } },
       { timestamp: at(4), type: 'event_msg', payload: { type: 'user_message', message: '<synthetic> 依頼文' } },
-      { timestamp: at(5), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 100 } } } },
     ]);
     expect(records).toHaveLength(0);
   });

@@ -1,6 +1,6 @@
 # SPEC-COST — 価格表とコスト計算（詳細設計書）
 
-担当 Issue: #3。人間向けの基本仕様書は [docs/spec/COST.md](../spec/COST.md)。
+担当 Issue: #3（Claude）・#30（Codex モデル対応）。人間向けの基本仕様書は [docs/spec/COST.md](../spec/COST.md)。
 
 ## ゴール
 
@@ -63,6 +63,19 @@ $/1M tokens。キャッシュ単価は input 単価に対する倍率（read = 0
 - [x] `SPEC-COST-040` レコード群からモデル別コストと合計を集計する
 - [x] `SPEC-COST-041` 集計結果に未知モデル名の一覧を含める
 - [x] `SPEC-COST-042` 集計結果に推定値である旨のフラグと単価の出典を含める
+
+## Codex（OpenAI）モデル対応（Issue #30）
+
+- `ModelPrice` に省略可能な **`cacheRead`（$/1M・cached input の明示単価）** を追加する。指定があれば `input × cacheMultipliers.read` の導出より**優先**する。OpenAI は cached input の割引率がモデルごとに異なる（一律倍率で表せない）ため
+- pricing.json に載せる Codex モデルは **OpenAI 公式価格ページを WebSearch で確認できたものだけ**（観測モデル: gpt-5.5 / gpt-5.4-mini / gpt-5.3-codex / gpt-5-codex / gpt-5.1-codex / o3 / gpt-5.6-sol / gpt-5.6-terra）。確認できないモデルは追加せず unknownModel 警告のままにする
+- `source` は Anthropic / OpenAI の 2 出典を 1 文字列で併記する（例: `claude-api skill（2026-06-24）+ OpenAI pricing（確認日）`）
+- Codex usage は cache write が常に 0 なので write 系単価は適用されない（会計側の契約は design/CODEX.md）
+
+### 受け入れ基準（#30）
+
+- [x] `SPEC-COST-050` モデル単位の cacheRead 明示単価が倍率導出より優先して適用される
+- [x] `SPEC-COST-051` cacheRead 明示単価の無いモデルは従来どおり input 単価 × read 倍率で計算される（既存結果不変）
+- [x] `SPEC-COST-052` 価格表に出典確認済みの Codex モデルが載り、未確認の観測モデルは unknownModel 警告になる
 
 ## 実測（Issue #3 時点）
 
