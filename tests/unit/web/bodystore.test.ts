@@ -28,7 +28,7 @@ describe('createBodyStore', () => {
     expect(fetchPage).toHaveBeenLastCalledWith(20, 5);
   });
 
-  it('SPEC-LIVE-024: 総件数が増えたとき取得済みの完全ページは保持し、末尾の部分ページだけ再取得する', async () => {
+  it('SPEC-LIVE-024: 総件数が増えたとき取得済みの本文は破棄せず、末尾の部分ページは不足分だけ取得する', async () => {
     const fetchPage = vi.fn(async (start: number, limit: number) =>
       Array.from({ length: limit }, (_, i) => body(`msg-${start + i}`)),
     );
@@ -40,13 +40,21 @@ describe('createBodyStore', () => {
 
     store.grow(37);
 
-    // 部分だった末尾ページは新しい limit で取り直す
+    // 取得済み本文は grow 後も破棄されない（表示中メッセージがちらつかない）
+    expect(store.peek(24)).toEqual(body('msg-24'));
+
+    // 部分ページは不足分だけ取得する（取得済み 20..24 を再リクエストしない）
     expect(await store.ensure(28)).toEqual(body('msg-28'));
-    expect(fetchPage).toHaveBeenLastCalledWith(20, 10);
+    expect(fetchPage).toHaveBeenLastCalledWith(25, 5);
     expect(fetchPage).toHaveBeenCalledTimes(3);
+    expect(store.peek(24)).toEqual(body('msg-24'));
 
     // 完全ページはキャッシュのまま（再取得しない）
     expect(await store.ensure(3)).toEqual(body('msg-3'));
     expect(fetchPage).toHaveBeenCalledTimes(3);
+
+    // 新しい末尾ページは total を超えない limit で要求する
+    await store.ensure(35);
+    expect(fetchPage).toHaveBeenLastCalledWith(30, 7);
   });
 });

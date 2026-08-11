@@ -2,7 +2,7 @@
  * 表示行への平坦化と sidechain 分離（SPEC-CHAT-020/025/030）。仕様は docs/design/CHAT.md。
  */
 import { describe, expect, it } from 'vitest';
-import { buildRows } from '../../../web/src/lib/thread';
+import { buildRows, createRowBuilder } from '../../../web/src/lib/thread';
 import type { MessageMeta } from '../../../web/src/lib/types';
 
 let seq = 0;
@@ -80,5 +80,102 @@ describe('buildRows', () => {
     const branch = rows[2];
     if (branch?.type !== 'sidechain') throw new Error('sidechain 行がありません');
     expect(branch.records.map((r) => r.uuid)).toEqual(['s1', 's2']);
+  });
+});
+
+describe('createRowBuilder', () => {
+  it('SPEC-LIVE-060: 増分適用で変化のない既存行の参照が保たれ、新着行だけが末尾に追加される', () => {
+    const builder = createRowBuilder();
+    builder.append([
+      meta({ index: 0, kind: 'user', uuid: 'u1', preview: '調べて' }),
+      meta({ index: 1, kind: 'assistant', uuid: 'a1' }),
+    ]);
+    const before = builder.rows();
+
+    builder.append([
+      meta({ index: 2, kind: 'user', uuid: 'u2', preview: '続けて' }),
+      meta({ index: 3, kind: 'assistant', uuid: 'a2' }),
+    ]);
+    const after = builder.rows();
+
+    expect(after).toHaveLength(4);
+    // 既存行はオブジェクト参照ごと維持される
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+    expect(after[2]?.type).toBe('message');
+    expect(after[3]?.type).toBe('message');
+    // rows() は呼び出しごとに新しい配列を返す（React の変更検知用）
+    expect(after).not.toBe(before);
+  });
+
+  it('SPEC-LIVE-061: 追記された tool_result は発行元 assistant 行に取り付き、その行だけ参照が置き換わる', () => {
+    const builder = createRowBuilder();
+    builder.append([
+      meta({ index: 0, kind: 'user', uuid: 'u1' }),
+      meta({ index: 1, kind: 'assistant', uuid: 'a1', toolUses: [{ id: 'tu1', name: 'Bash' }] }),
+    ]);
+    const before = builder.rows();
+
+    builder.append([
+      meta({ index: 2, kind: 'user', uuid: 'r1', isToolResult: true, toolResultFor: 'tu1' }),
+    ]);
+    const after = builder.rows();
+
+    expect(after).toHaveLength(2);
+    expect(after[0]).toBe(before[0]);
+    // 発行元の行だけが新しい参照になり、tool_result を保持する
+    expect(after[1]).not.toBe(before[1]);
+    const owner = after[1];
+    if (owner?.type !== 'message') throw new Error('assistant 行がありません');
+    expect(owner.toolResults['tu1']?.uuid).toBe('r1');
+    // 置き換え前の行オブジェクトは変異していない（copy-on-write）
+    const old = before[1];
+    if (old?.type !== 'message') throw new Error('assistant 行がありません');
+    expect(old.toolResults['tu1']).toBeUndefined();
+  });
+
+  it('SPEC-LIVE-062: 追記された sidechain の続きは既存の分岐行に連結され、その行だけ参照が置き換わる', () => {
+    const builder = createRowBuilder();
+    builder.append([
+      meta({ index: 0, kind: 'user', uuid: 'u1' }),
+      meta({ index: 1, kind: 'user', uuid: 's1', parentUuid: null, isSidechain: true }),
+    ]);
+    const before = builder.rows();
+
+    builder.append([
+      meta({ index: 2, kind: 'assistant', uuid: 's2', parentUuid: 's1', isSidechain: true }),
+    ]);
+    const after = builder.rows();
+
+    expect(after).toHaveLength(2);
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).not.toBe(before[1]);
+    const branch = after[1];
+    if (branch?.type !== 'sidechain') throw new Error('sidechain 行がありません');
+    expect(branch.records.map((r) => r.uuid)).toEqual(['s1', 's2']);
+    const old = before[1];
+    if (old?.type !== 'sidechain') throw new Error('sidechain 行がありません');
+    expect(old.records).toHaveLength(1);
+  });
+
+  it('SPEC-LIVE-063: 増分適用の結果は同じレコード列を一括で平坦化した結果と一致する', () => {
+    const records = [
+      meta({ index: 0, kind: 'user', uuid: 'u1', preview: '調べて' }),
+      meta({ index: 1, kind: 'assistant', uuid: 'a1', toolUses: [{ id: 'tu1', name: 'Agent' }] }),
+      meta({ index: 2, kind: 'user', uuid: 's1', parentUuid: null, isSidechain: true }),
+      meta({ index: 3, kind: 'assistant', uuid: 's2', parentUuid: 's1', isSidechain: true }),
+      meta({ index: 4, kind: 'user', uuid: 'r1', isToolResult: true, toolResultFor: 'tu1' }),
+      meta({ index: 5, kind: 'system', subtype: 'turn_duration', durationMs: 1000 }),
+      meta({ index: 6, kind: 'title', title: '隠しメタ' }),
+      meta({ index: 7, kind: 'system', subtype: 'compact_boundary' }),
+      meta({ index: 8, kind: 'user', uuid: 'u2', preview: '続けて' }),
+    ];
+
+    const builder = createRowBuilder();
+    // 1 件ずつの追記でも一括平坦化と同じ結果になる
+    for (const record of records) builder.append([record]);
+
+    expect(builder.rows()).toEqual(buildRows(records));
+    expect(builder.count).toBe(records.length);
   });
 });

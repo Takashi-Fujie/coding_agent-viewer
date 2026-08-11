@@ -4,6 +4,8 @@
  * 接続はブラウザ標準 EventSource に任せる（自動再接続・Last-Event-ID の再送を自前で
  * 実装しない）。jsdom に EventSource が無いためコンストラクタは注入できるようにする。
  */
+import { createRowBuilder } from './thread';
+import type { RowBuilder } from './thread';
 import type { CostSummary, MessageMeta, SessionDetail, SessionSummary } from './types';
 
 export type LiveStatus = 'connected' | 'disconnected';
@@ -57,4 +59,23 @@ export function applyAppend(detail: SessionDetail, payload: LiveAppendPayload): 
     cost: payload.cost,
     messages: [...detail.messages.slice(0, payload.start), ...payload.messages],
   };
+}
+
+/**
+ * append イベントを行ビルダーへ適用する（SPEC-LIVE-065）。
+ * start が既知件数と一致するときだけ増分適用し（既存行の参照を保つ）、
+ * 一致しないとき（再送・巻き戻り）は適用済みメッセージ全量から作り直す。
+ */
+export function advanceRowBuilder(
+  builder: RowBuilder | undefined,
+  payload: LiveAppendPayload,
+  appliedMessages: MessageMeta[],
+): RowBuilder {
+  if (builder && payload.start === builder.count) {
+    builder.append(payload.messages);
+    return builder;
+  }
+  const fresh = createRowBuilder();
+  fresh.append(appliedMessages);
+  return fresh;
 }

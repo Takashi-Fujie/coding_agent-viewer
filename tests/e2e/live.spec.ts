@@ -61,6 +61,71 @@ test('SPEC-LIVE-032: 別セッションを開いた状態では、他セッシ�
   await expect(page.getByText('E2E 用の依頼文。', { exact: false })).toBeVisible();
 });
 
+/* ---- 差分追記描画（Issue #33・SPEC-LIVE-066〜068） ---- */
+
+test('SPEC-LIVE-066: 追記前に目印を付けた表示済みメッセージの DOM 要素が追記後も同一で、新着分だけが末尾に現れる', async ({
+  page,
+}) => {
+  await page.goto(sessionUrl(SESSION_LIVE));
+  // 本文の遅延取得が完了した要素を対象にする（プレビュー → 本文の置き換えは正規の挙動）
+  const shown = page.locator('.msg .text:not(.preview)', { hasText: '初期状態の応答。' });
+  await expect(shown).toBeVisible();
+  // DOM ノードに目印を付ける。要素が作り直されると（新しいノードになると）消える
+  await shown.evaluate((el) => {
+    (el as HTMLElement & { __e2eMark?: boolean }).__e2eMark = true;
+  });
+
+  await appendLive(4);
+  await expect(page.getByText('ライブ追記メッセージ 4')).toBeVisible({ timeout: 15_000 });
+
+  await expect(shown).toBeVisible();
+  expect(
+    await shown.evaluate((el) => (el as HTMLElement & { __e2eMark?: boolean }).__e2eMark === true),
+  ).toBe(true);
+});
+
+test('SPEC-LIVE-067: 追記の前後で、取得済み本文範囲への再リクエストが発生しない', async ({
+  page,
+}) => {
+  const bodyRequests: string[] = [];
+  page.on('request', (req) => {
+    if (req.url().includes('/messages?')) bodyRequests.push(new URL(req.url()).search);
+  });
+
+  await page.goto(sessionUrl(SESSION_LIVE));
+  await expect(page.getByText('初期状態の応答。')).toBeVisible();
+  const beforeCount = bodyRequests.length;
+  const fetchedStarts = new Set(bodyRequests.map((s) => new URLSearchParams(s).get('start')));
+
+  await appendLive(5);
+  await expect(page.getByText('ライブ追記メッセージ 5')).toBeVisible({ timeout: 15_000 });
+
+  // 追記後の本文リクエストは新着分（未取得の start）だけで、取得済み範囲を再要求しない
+  const afterAppend = bodyRequests.slice(beforeCount);
+  expect(afterAppend.length).toBeGreaterThan(0);
+  for (const search of afterAppend) {
+    expect(fetchedStarts.has(new URLSearchParams(search).get('start'))).toBe(false);
+  }
+});
+
+test('SPEC-LIVE-068: 会話の途中へスクロールした状態で追記が来ても、スクロール位置が変わらない', async ({
+  page,
+}) => {
+  // メッセージ 2 件でも縦スクロールが発生するようビューポートを低くする
+  await page.setViewportSize({ width: 1280, height: 360 });
+  await page.goto(sessionUrl(SESSION_LIVE));
+  await expect(page.getByText('初期状態の応答。')).toBeVisible();
+
+  // このアプリのスクローラは window ではなく .appmain（.app が 100vh 固定）
+  const scroller = page.locator('main.appmain');
+  await scroller.evaluate((el) => el.scrollTo(0, 200));
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(200);
+
+  await appendLive(6);
+  await expect(page.getByText('ライブ追記メッセージ 6')).toBeVisible({ timeout: 15_000 });
+  expect(await scroller.evaluate((el) => el.scrollTop)).toBe(200);
+});
+
 /* ---- Codex ライブ更新（Issue #31・SPEC-LIVE-050〜051） ---- */
 
 async function appendCodex(n: number): Promise<void> {
