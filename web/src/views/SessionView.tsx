@@ -2,10 +2,11 @@
  * セッション分析画面（SPEC-CHAT の本体）。仕様は docs/design/CHAT.md。
  *
  * メタ（IndexRecord）で骨格・集計を組み立て、本文は表示範囲だけ遅延取得する。
- * 会話は行配列へ平坦化し、window 基準の仮想スクロールで描画する（SPEC-CHAT-025）。
+ * 会話は行配列へ平坦化し、実スクローラ `.appmain` 基準の仮想スクロールで描画する
+ * （SPEC-CHAT-025 / SPEC-CHAT-075。window はスクロールしないため監視対象にしない）。
  */
-import { memo, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { memo, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from '../api';
 import { createBodyStore } from '../lib/bodystore';
 import { buildExchanges } from '../lib/exchanges';
@@ -198,7 +199,7 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
   );
 }
 
-/** 行配列を window 仮想スクロールで描画する。 */
+/** 行配列を実スクローラ（`.appmain`）基準の仮想スクロールで描画する（SPEC-CHAT-075）。 */
 function VirtualConversation({
   rows,
   store,
@@ -211,11 +212,28 @@ function VirtualConversation({
   totalCost: number;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
-  const virtualizer = useWindowVirtualizer({
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  useLayoutEffect(() => {
+    const listEl = listRef.current;
+    const el = listEl?.closest<HTMLElement>('.appmain') ?? null;
+    setScrollEl(el);
+    if (listEl && el) {
+      // offsetTop は offsetParent 基準で `.appmain` 基準と一致する保証が無いため、
+      // スクロールコンテナのコンテンツ原点からの距離を明示計算する
+      setScrollMargin(
+        listEl.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop,
+      );
+    }
+  }, []);
+
+  const virtualizer = useVirtualizer({
     count: rows.length,
+    getScrollElement: () => scrollEl,
     estimateSize: () => 96,
     overscan: 8,
-    scrollMargin: listRef.current?.offsetTop ?? 0,
+    scrollMargin,
   });
 
   return (

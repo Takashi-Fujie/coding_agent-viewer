@@ -16,8 +16,10 @@ import {
   E2E_PROJECT_ID,
   E2E_PROJECT_PATH,
   E2E_ROOT,
+  LONG_TURNS,
   SEARCH_TOKEN,
   SESSION_LIVE,
+  SESSION_LONG,
   SESSION_MAIN,
   SESSION_SAMPLE,
   codexFilePath,
@@ -165,6 +167,39 @@ function liveSessionLines(): Record<string, unknown>[] {
   ];
 }
 
+/**
+ * 仮想スクロール追従テスト用の長いセッション（Issue #40）。
+ * ビューポート + overscan を大きく超える行数にし、既知モデルのみ・SEARCH_TOKEN 無しで
+ * dash.spec の集計 assert（未知モデル 1 件・検索ヒット）を壊さない。
+ */
+function longSessionLines(): Record<string, unknown>[] {
+  const sid = SESSION_LONG;
+  const lines: Record<string, unknown>[] = [];
+  let prev: string | null = null;
+  for (let n = 1; n <= LONG_TURNS; n++) {
+    const u = `u-e3-${String(n)}`;
+    const a = `a-e3-${String(n)}`;
+    lines.push(
+      userLine({
+        uuid: u,
+        parentUuid: prev,
+        timestamp: iso(ONE_DAY - n * 2),
+        sessionId: sid,
+        content: `長いセッションの依頼 ${String(n)}`,
+      }),
+      assistantLine({
+        uuid: a,
+        parentUuid: u,
+        timestamp: iso(ONE_DAY - n * 2 + 1),
+        sessionId: sid,
+        content: [{ type: 'text', text: `長いセッションの応答 ${String(n)}` }],
+      }),
+    );
+    prev = a;
+  }
+  return lines;
+}
+
 /** ライブ更新テストが追記する行（tests 側からも import する）。 */
 export function liveAppendLine(n: number): Record<string, unknown> {
   return assistantLine({
@@ -268,6 +303,7 @@ export async function seed(): Promise<void> {
   await cp(SAMPLE_FIXTURE, sessionFilePath(SESSION_SAMPLE));
   await writeFile(sessionFilePath(SESSION_MAIN), toJsonl(mainSessionLines()), 'utf8');
   await writeFile(sessionFilePath(SESSION_LIVE), toJsonl(liveSessionLines()), 'utf8');
+  await writeFile(sessionFilePath(SESSION_LONG), toJsonl(longSessionLines()), 'utf8');
 
   const codexPath = codexFilePath();
   await mkdir(dirname(codexPath), { recursive: true });
