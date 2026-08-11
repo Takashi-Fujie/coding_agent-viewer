@@ -7,13 +7,31 @@
  * SessionView の配線（reset での再取得・仮想スクロールへの反映）は人間動作確認と
  * E2E（Issue #10）が受け持ち、ここでは差分適用と接続状態のロジックを検証する。
  */
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyAppend, openLive } from '../../../web/src/lib/live';
+import { advanceRowBuilder, applyAppend, openLive } from '../../../web/src/lib/live';
 import type { LiveAppendPayload, LiveStatus } from '../../../web/src/lib/live';
-import { buildRows } from '../../../web/src/lib/thread';
+import { buildRows, createRowBuilder } from '../../../web/src/lib/thread';
 import { SessionHeader } from '../../../web/src/components/SessionHeader';
-import type { MessageMeta, SessionDetail, SessionSummary } from '../../../web/src/lib/types';
+import { SessionView } from '../../../web/src/views/SessionView';
+import { api } from '../../../web/src/api';
+import type { MessageBody, MessageMeta, SessionDetail, SessionSummary } from '../../../web/src/lib/types';
+
+// jsdom にはレイアウトが無く仮想スクロールが行を描画しないため、全行を素通しで
+// 描画する代役に差し替える。実ブラウザの仮想化は E2E（SPEC-LIVE-066〜068）が受け持つ。
+vi.mock('@tanstack/react-virtual', () => ({
+  useWindowVirtualizer: (opts: { count: number }) => ({
+    getTotalSize: () => opts.count * 96,
+    getVirtualItems: () =>
+      Array.from({ length: opts.count }, (_, index) => ({ key: index, index, start: index * 96 })),
+    options: { scrollMargin: 0 },
+    measureElement: () => undefined,
+  }),
+}));
+
+vi.mock('../../../web/src/api', () => ({
+  api: { session: vi.fn(), messages: vi.fn() },
+}));
 
 afterEach(cleanup);
 
@@ -223,5 +241,80 @@ describe('openLive', () => {
 
     live.close();
     expect(es?.closed).toBe(true);
+  });
+});
+
+describe('差分追記描画（Issue #33）', () => {
+  const bodyOf = (text: string): MessageBody => ({ blocks: [{ type: 'text', text }] });
+
+  it('SPEC-LIVE-064: append イベントで表示済み行の DOM 要素は作り直されず、新着行だけが追加される', async () => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const sessionMock = vi.mocked(api.session);
+    const messagesMock = vi.mocked(api.messages);
+    sessionMock.mockResolvedValue(makeDetail());
+    messagesMock.mockImplementation(async (_id, start, limit) => ({
+      start,
+      limit,
+      total: start + limit,
+      items: Array.from({ length: limit }, (_, i) => ({
+        index: start + i,
+        meta: meta({ index: start + i }),
+        body: bodyOf(`本文${String(start + i)}`),
+      })),
+    }));
+
+    render(<SessionView projectId="-home-dev-live" sessionId="sess-1" />);
+
+    // 初期表示: 本文が遅延取得で埋まる
+    await screen.findByText('本文0');
+    await screen.findByText('本文1');
+    const shown = screen.getByText('本文0');
+    expect(messagesMock).toHaveBeenCalledWith('sess-1', 0, 2);
+
+    const es = FakeEventSource.instances.at(-1);
+    act(() => {
+      es?.emit('append', {
+        start: 2,
+        messages: [meta({ index: 2, kind: 'assistant', type: 'assistant', uuid: 'a-2', preview: '新着' })],
+        summary: makeSummary({ recordCount: 3, assistantCount: 2 }),
+        cost: { estimated: true, source: 'test', currency: 'USD', total: 0.75, byModel: {}, unknownModels: [] },
+      } satisfies LiveAppendPayload);
+    });
+
+    // 新着行だけが末尾に追加され、本文は不足分（start=2）だけ取得される
+    await screen.findByText('本文2');
+    expect(messagesMock).toHaveBeenLastCalledWith('sess-1', 2, 1);
+    expect(messagesMock).toHaveBeenCalledTimes(2);
+
+    // 表示済みメッセージの DOM 要素は追記の前後で同一（作り直されていない）
+    expect(screen.getByText('本文0')).toBe(shown);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('SPEC-LIVE-065: start が既知件数と一致しない append は全再構築で適用され、表示が二重にならない', () => {
+    const detail = makeDetail();
+    const payload: LiveAppendPayload = {
+      start: 2,
+      messages: [meta({ index: 2, kind: 'assistant', type: 'assistant', uuid: 'a-2' })],
+      summary: makeSummary({ recordCount: 3 }),
+      cost: { estimated: true, source: 'test', currency: 'USD', total: 0.75, byModel: {}, unknownModels: [] },
+    };
+
+    const builder = createRowBuilder();
+    builder.append(detail.messages);
+
+    // start === count: 増分適用（同じ builder のまま）
+    const applied = applyAppend(detail, payload);
+    const advanced = advanceRowBuilder(builder, payload, applied.messages);
+    expect(advanced).toBe(builder);
+    expect(advanced.rows().map((r) => r.type === 'message' && r.record.uuid)).toEqual(['u-1', 'a-1', 'a-2']);
+
+    // 同じ payload の再送（start 2 ≠ count 3）: 全再構築になり、行が二重にならない
+    const reapplied = applyAppend(applied, payload);
+    const rebuilt = advanceRowBuilder(advanced, payload, reapplied.messages);
+    expect(rebuilt).not.toBe(advanced);
+    expect(rebuilt.rows().map((r) => r.type === 'message' && r.record.uuid)).toEqual(['u-1', 'a-1', 'a-2']);
   });
 });

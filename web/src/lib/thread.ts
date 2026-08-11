@@ -32,54 +32,90 @@ export type Row = MessageRow | DividerRow | SidechainRow;
 /** メイン列に行として現れない補助メタ（タイトル・モード等）。 */
 const HIDDEN_KINDS = new Set(['title', 'mode', 'last-prompt', 'attachment', 'pr-link', 'unknown']);
 
-export function buildRows(records: MessageMeta[]): Row[] {
+export interface RowBuilder {
+  /** これまでに消費したレコード件数（増分適用の起点判定用）。 */
+  readonly count: number;
+  /** 追記レコードを取り込む。既存行への取り付けは copy-on-write で行参照を置き換える。 */
+  append: (records: MessageMeta[]) => void;
+  /** 現在の行配列。呼び出しごとに新しい配列を返すが、変化のない行の参照は維持する。 */
+  rows: () => Row[];
+}
+
+/**
+ * 行配列の増分構築（SPEC-LIVE-060〜063）。ライブ追記で全行を作り直さないために、
+ * 平坦化の内部状態（分岐・tool_use の対応表）を append をまたいで保持する。
+ * 既存行に手を入れるとき（tool_result の取り付け・sidechain の連結）は、その行だけを
+ * 新しいオブジェクトに置き換える。React 側は参照比較だけで再描画の要否を判定できる。
+ */
+export function createRowBuilder(): RowBuilder {
   const rows: Row[] = [];
-  /** sidechain の uuid → 属する分岐行。parentUuid の連結でチェーンを辿る。 */
-  const branchByUuid = new Map<string, SidechainRow>();
-  /** tool_use_id → その tool_use を発行した assistant 行。 */
-  const ownerByToolUseId = new Map<string, MessageRow>();
+  /** sidechain の uuid → 属する分岐行の rows 内位置。parentUuid の連結でチェーンを辿る。 */
+  const branchByUuid = new Map<string, number>();
+  /** tool_use_id → その tool_use を発行した assistant 行の rows 内位置。 */
+  const ownerByToolUseId = new Map<string, number>();
+  let count = 0;
 
-  for (const record of records) {
-    if (record.isSidechain) {
-      let branch = record.parentUuid ? branchByUuid.get(record.parentUuid) : undefined;
-      if (!branch) {
-        branch = { type: 'sidechain', startIndex: record.index, records: [] };
-        rows.push(branch);
-      }
-      branch.records.push(record);
-      if (record.uuid) branchByUuid.set(record.uuid, branch);
-      continue;
-    }
-
-    if (HIDDEN_KINDS.has(record.kind)) continue;
-
-    if (record.kind === 'system') {
-      if (record.subtype === 'compact_boundary') {
-        rows.push({ type: 'compact', startIndex: record.index, record });
-      } else if (record.durationMs !== undefined) {
-        rows.push({ type: 'turn', startIndex: record.index, record });
-      }
-      // それ以外の system はメイン列に出さない
-      continue;
-    }
-
-    if (record.kind === 'user' && record.isToolResult) {
-      const owner = record.toolResultFor ? ownerByToolUseId.get(record.toolResultFor) : undefined;
-      if (owner && record.toolResultFor) {
-        owner.toolResults[record.toolResultFor] = record;
+  function append(records: MessageMeta[]): void {
+    count += records.length;
+    for (const record of records) {
+      if (record.isSidechain) {
+        const at = record.parentUuid ? branchByUuid.get(record.parentUuid) : undefined;
+        if (at === undefined) {
+          rows.push({ type: 'sidechain', startIndex: record.index, records: [record] });
+          if (record.uuid) branchByUuid.set(record.uuid, rows.length - 1);
+        } else {
+          const branch = rows[at] as SidechainRow;
+          rows[at] = { ...branch, records: [...branch.records, record] };
+          if (record.uuid) branchByUuid.set(record.uuid, at);
+        }
         continue;
       }
-      // 発行元が見つからない結果は落とさず独立行として残す
-    }
 
-    const row: MessageRow = { type: 'message', startIndex: record.index, record, toolResults: {} };
-    rows.push(row);
-    for (const toolUse of record.toolUses ?? []) {
-      ownerByToolUseId.set(toolUse.id, row);
+      if (HIDDEN_KINDS.has(record.kind)) continue;
+
+      if (record.kind === 'system') {
+        if (record.subtype === 'compact_boundary') {
+          rows.push({ type: 'compact', startIndex: record.index, record });
+        } else if (record.durationMs !== undefined) {
+          rows.push({ type: 'turn', startIndex: record.index, record });
+        }
+        // それ以外の system はメイン列に出さない
+        continue;
+      }
+
+      if (record.kind === 'user' && record.isToolResult) {
+        const at = record.toolResultFor ? ownerByToolUseId.get(record.toolResultFor) : undefined;
+        if (at !== undefined && record.toolResultFor) {
+          const owner = rows[at] as MessageRow;
+          rows[at] = {
+            ...owner,
+            toolResults: { ...owner.toolResults, [record.toolResultFor]: record },
+          };
+          continue;
+        }
+        // 発行元が見つからない結果は落とさず独立行として残す
+      }
+
+      rows.push({ type: 'message', startIndex: record.index, record, toolResults: {} });
+      for (const toolUse of record.toolUses ?? []) {
+        ownerByToolUseId.set(toolUse.id, rows.length - 1);
+      }
     }
   }
 
-  return rows;
+  return {
+    get count() {
+      return count;
+    },
+    append,
+    rows: () => rows.slice(),
+  };
+}
+
+export function buildRows(records: MessageMeta[]): Row[] {
+  const builder = createRowBuilder();
+  builder.append(records);
+  return builder.rows();
 }
 
 /** やりとり絞り込み（SPEC-CHAT-044）: 指定範囲のレコードで始まる行だけ残す。 */

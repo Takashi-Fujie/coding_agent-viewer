@@ -4,15 +4,15 @@
  * メタ（IndexRecord）で骨格・集計を組み立て、本文は表示範囲だけ遅延取得する。
  * 会話は行配列へ平坦化し、window 基準の仮想スクロールで描画する（SPEC-CHAT-025）。
  */
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { api } from '../api';
 import { createBodyStore } from '../lib/bodystore';
 import { buildExchanges } from '../lib/exchanges';
 import { formatUsd } from '../lib/format';
-import { applyAppend, openLive } from '../lib/live';
+import { advanceRowBuilder, applyAppend, openLive } from '../lib/live';
 import type { LiveStatus } from '../lib/live';
-import { buildRows, filterRows } from '../lib/thread';
+import { createRowBuilder, filterRows } from '../lib/thread';
 import { DividerLine } from '../components/DividerLine';
 import { KindLegend } from '../components/KindLegend';
 import { MessageBubble } from '../components/MessageBubble';
@@ -23,7 +23,7 @@ import { TurnCostChart } from '../components/TurnCostChart';
 import { UsageTable } from '../components/UsageTable';
 import { routeHash } from '../router';
 import type { BodyStore } from '../lib/bodystore';
-import type { Row } from '../lib/thread';
+import type { Row, RowBuilder } from '../lib/thread';
 import type { MessageBody, SessionDetail } from '../lib/types';
 
 const PAGE_SIZE = 100;
@@ -41,6 +41,10 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
   /** reset イベント（全再構築）で詳細を取得し直すための再読込キー（SPEC-LIVE-023）。 */
   const [reloadKey, setReloadKey] = useState(0);
   const storeRef = useRef<BodyStore | undefined>(undefined);
+  /** 行の増分構築（SPEC-LIVE-060〜065）。append をまたいで平坦化状態を保持する。 */
+  const builderRef = useRef<RowBuilder | undefined>(undefined);
+  const detailRef = useRef<SessionDetail | undefined>(undefined);
+  const [rows, setRows] = useState<Row[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -48,6 +52,9 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
     setDetail(undefined);
     setSelected(null);
     setLiveStatus(undefined);
+    setRows([]);
+    builderRef.current = undefined;
+    detailRef.current = undefined;
     api.session(sessionId).then(
       (d) => {
         if (!alive) return;
@@ -57,14 +64,26 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
           fetchPage: async (start, limit) =>
             (await api.messages(sessionId, start, limit)).items.map((item) => item.body),
         });
+        const builder = createRowBuilder();
+        builder.append(d.messages);
+        builderRef.current = builder;
+        detailRef.current = d;
         setDetail(d);
+        setRows(builder.rows());
         // ライブ購読（SPEC-LIVE-020〜023）。追記は末尾へ差分適用し、集計は全量を差し替える
         live = openLive({
           sessionId,
           have: d.messages.length,
           onAppend: (payload) => {
-            storeRef.current?.grow(payload.start + payload.messages.length);
-            setDetail((prev) => (prev ? applyAppend(prev, payload) : prev));
+            const prev = detailRef.current;
+            if (!alive || !prev) return;
+            const applied = applyAppend(prev, payload);
+            detailRef.current = applied;
+            storeRef.current?.grow(applied.messages.length);
+            // 行は増分適用（SPEC-LIVE-060〜062）。start 不一致は全再構築（SPEC-LIVE-065）
+            builderRef.current = advanceRowBuilder(builderRef.current, payload, applied.messages);
+            setDetail(applied);
+            setRows(builderRef.current.rows());
           },
           onReset: () => setReloadKey((k) => k + 1),
           onStatus: (status) => {
@@ -82,7 +101,6 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
     };
   }, [sessionId, reloadKey]);
 
-  const rows = useMemo(() => (detail ? buildRows(detail.messages) : []), [detail]);
   const exchanges = useMemo(() => (detail ? buildExchanges(detail.messages) : []), [detail]);
   const visibleRows = useMemo(() => {
     if (selected === null) return rows;
@@ -233,8 +251,11 @@ function VirtualConversation({
   );
 }
 
-/** 行 1 件の描画。message / sidechain 行は表示時に本文ページを取得する（SPEC-CHAT-026）。 */
-function RowView({ row, store }: { row: Row; store: BodyStore | undefined }) {
+/**
+ * 行 1 件の描画。message / sidechain 行は表示時に本文ページを取得する（SPEC-CHAT-026）。
+ * memo 化により、ライブ追記で参照の変わらない既存行は再描画されない（SPEC-LIVE-064）。
+ */
+const RowView = memo(function RowView({ row, store }: { row: Row; store: BodyStore | undefined }) {
   const [, bump] = useReducer((c: number) => c + 1, 0);
 
   const indices = useMemo(() => {
@@ -278,4 +299,4 @@ function RowView({ row, store }: { row: Row; store: BodyStore | undefined }) {
         />
       );
   }
-}
+});
