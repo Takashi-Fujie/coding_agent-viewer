@@ -194,25 +194,40 @@ describe('loadSnapshot の worktree 併合', () => {
     });
   });
 
-  it('SPEC-CORE-090: Codex ソースのグループは併合対象にしない', async () => {
+  it('SPEC-CORE-090: 併合先はソース内でのみ解決され、同じ本体ルートでも claude と codex のグループは併合されない', async () => {
     await withTempDir(async (root) => {
-      const { worktreeRoot } = await buildWorktreeTree(root);
+      const { mainRoot, worktreeRoot } = await buildWorktreeTree(root);
+      const { logDir, cacheDir } = await buildMergeTree(root);
       const sessionsDir = join(root, 'sessions');
       const rollout = 'rollout-2026-08-08T10-00-00-00000000-0000-7000-8000-000000000001.jsonl';
       await mkdir(join(sessionsDir, '2026', '08', '08'), { recursive: true });
-      // cwd が worktree を指していても、日付グループのまま併合されない
+      // 本体を claude の proj-main が持つ状態で、codex の worktree セッションを併合する
       await writeJsonl(join(sessionsDir, '2026', '08', '08', rollout), [
         {
           timestamp: '2026-08-08T10:00:00.000Z',
           type: 'session_meta',
           payload: { id: '<synthetic>', cwd: worktreeRoot },
         },
+        {
+          timestamp: '2026-08-08T10:00:01.000Z',
+          type: 'response_item',
+          payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<synthetic> 依頼文' }] },
+        },
       ]);
       const snapshot = await loadSnapshot({
-        sources: [createCodexSource({ sessionsDir })],
-        cacheDir: join(root, 'cache'),
+        sources: [createClaudeSource({ logDir }), createCodexSource({ sessionsDir })],
+        cacheDir,
       });
-      expect(snapshot.projects.map((p) => p.id)).toEqual(['2026-08-08']);
+
+      // claude 側は従来どおり proj-main へ、codex 側は codex: 合成 id へ（ソースをまたいで混ざらない）
+      const claudeMain = snapshot.projects.find((p) => p.id === 'proj-main');
+      expect(claudeMain?.sessions.map((s) => s.id).sort()).toEqual([SESSION_MAIN, SESSION_WT]);
+      const codexId = `codex:${mainRoot.replace(/[^A-Za-z0-9]/g, '-')}`;
+      const codexMerged = snapshot.projects.find((p) => p.id === codexId);
+      expect(codexMerged?.sourceId).toBe('codex');
+      expect(codexMerged?.sessions.map((s) => s.id)).toEqual([
+        `codex:${rollout.replace(/\.jsonl$/, '')}`,
+      ]);
     });
   });
 });

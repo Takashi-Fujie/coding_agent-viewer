@@ -165,7 +165,7 @@ tool_result（user レコード）には `tool_use_id` しか無い。ツール�
 
 - `server/store.ts` の `ProjectEntry` に `sourceId: string` を追加する（グループは単一ソースから発見されるため 1 グループ 1 ソース。ソースをまたぐ併合はしない）
 - API DTO に `source: string` を追加する: `ProjectListItem`・プロジェクト詳細のセッション行・`GET /api/sessions/:id` のレスポンス・検索ヒット行。`SessionEntry.sourceId` の「API に露出させない」という #28 の内部規約は本 Issue で改訂する（UI 識別が要件になったため）
-- グループ ID の名前空間はソース間で分けない（#28 の決定を維持）。Codex のグループ ID は `YYYY-MM-DD`、Claude は `-` 縮約ディレクトリ名で形式が重ならず、`/api/projects/:id` の探索は従来どおり id 一致でよい。**形式が重なる新ソースを将来足すときはグループ ID にも接頭辞を導入する**（この判断をここに残す）
+- グループ ID の名前空間はソース間で分けない（#28 の決定を維持）。Codex のグループ ID は `YYYY-MM-DD`、Claude は `-` 縮約ディレクトリ名で形式が重ならず、`/api/projects/:id` の探索は従来どおり id 一致でよい。**形式が重なる新ソースを将来足すときはグループ ID にも接頭辞を導入する**（この判断をここに残す。→ #45 で Codex を cwd グルーピングに変えた際、この判断に従い `codex:` 接頭辞を導入した。docs/design/CODEX.md 参照）
 
 ### 範囲フィルタ後のレコード件数
 
@@ -185,7 +185,7 @@ tool_result（user レコード）には `tool_use_id` しか無い。ツール�
 - **切替 UI**: セグメント切替（全ソース / Claude / Codex・`lib/source.tsx` の `SourceSwitch`）を Overview と Tools & Agents の期間フィルタ横（`.filterrow` 内）に置く（2026-08-09 オーナー合意で左ナビから移動）。選択は App レベルの state（Context）で保持し（ハッシュ遷移で失われない）、URL には載せない。既定は全ソース。`/api/sources` で Codex のセッション数が 0 なら「Codex」を disabled にする（切替 UI 自体は常時表示。2026-08-09 オーナー合意）
 - 各画面は選択ソースを API の `source` クエリへ渡して再取得する（クライアント側で行を隠さない）
 - **ソースバッジ**: プロジェクト一覧・セッション一覧・検索ヒット・プロジェクト画面のヘッダに DTO の `source` に基づくバッジ（`claude` / `codex` の表示名）を付ける。全ソース表示時も付ける（絞り込み時だけ出すと見分けの用を成さないため）
-- **Codex グループの行ラベル**: `source !== 'claude'` のとき行ラベルを `id`（日付）にし、cwd 末尾の basename を使わない。cwd フルパスのサブテキスト表示は従来どおり残す（`OverviewView.tsx` の一覧行・`SessionListView.tsx` のヘッダ / パンくず）
+- **グループの行ラベル**（#45 改定）: ソース不問で cwd 末尾の basename（path の無いグループは `id`）。cwd フルパスのサブテキスト表示は従来どおり残す（`OverviewView.tsx` の一覧行・`SessionListView.tsx` のヘッダ / パンくず）。#31 時点の「Codex は日付グループのため `id` をラベルにする」という分岐は、#45 の cwd グルーピングで不要になり廃止した
 - Codex 行のコスト・トークン欄は 0 のとき「—（未集計）」表示にする（#30 で集計が入るまでの暫定。Claude 行の 0 は従来どおり数値表示）
 
 ## 受け入れ基準（Issue #31）
@@ -202,14 +202,14 @@ tool_result（user レコード）には `tool_use_id` しか無い。ツール�
 
 - [x] `SPEC-DASH-085` ヘッダの切替（全ソース / Claude / Codex）で一覧・合計値・チャートが選択ソースだけの値になり、選択は画面遷移をまたいで保持される
 - [x] `SPEC-DASH-086` Codex のセッションが 0 件のとき切替 UI は表示されたまま「Codex」の選択肢が disabled になる
-- [x] `SPEC-DASH-087` 一覧・検索ヒットの行にソースバッジが付き、Codex グループの行ラベルは cwd 末尾ではなく日付（グループ ID）になる
+- [x] `SPEC-DASH-087` 一覧・検索ヒットの行にソースバッジが付き、グループの行ラベルはソース不問で cwd 末尾の basename（path の無いグループはグループ ID）になる（#45 改定。旧: Codex は日付ラベル）
 - [x] `SPEC-DASH-088` 日付クリック絞り込みは records > 0 を基準にし、usage 0 の Codex 行もその日に活動があれば一覧に残る
 - [x] `SPEC-DASH-089` Codex 行のコスト・トークン欄は 0 円と断定せず未集計表示になる
 
 ### E2E（tests/e2e）
 
 - [x] `SPEC-DASH-090` 切替で「Codex」を選ぶと Overview が Codex グループだけになり、「Claude」を選ぶと Codex グループが消えて従来値と一致する
-- [x] `SPEC-DASH-091` Codex グループの行にソースバッジと日付ラベルが描画される
+- [x] `SPEC-DASH-091` Codex グループの行にソースバッジと cwd 末尾ラベルが描画される（#45 改定。旧: 日付ラベル）
 - [x] `SPEC-DASH-092` 日付クリック絞り込みで usage 0 の Codex セッションが一覧に残る
 - [x] `SPEC-DASH-093` Codex セッションが無い seed では「Codex」選択肢が disabled 表示になる
 
