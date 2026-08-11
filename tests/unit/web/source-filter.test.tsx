@@ -16,7 +16,7 @@ afterEach(() => {
 
 const CLAUDE_PROJECT = {
   id: '-home-dev-sample',
-  source: 'claude',
+  sources: ['claude'],
   path: '/home/dev/sample',
   sessionCount: 2,
   totalTokens: 1000,
@@ -26,8 +26,8 @@ const CLAUDE_PROJECT = {
 };
 
 const CODEX_PROJECT = {
-  id: 'codex:-home-dev-codex-proj',
-  source: 'codex',
+  id: '-home-dev-codex-proj',
+  sources: ['codex'],
   path: '/home/dev/codex-proj',
   sessionCount: 1,
   totalTokens: 0,
@@ -39,7 +39,7 @@ const CODEX_PROJECT = {
 /** cwd 欠損の日付フォールバックグループ（path 無し → id 表示）。 */
 const CODEX_DATE_FALLBACK = {
   id: '2026-08-06',
-  source: 'codex',
+  sources: ['codex'],
   path: null,
   sessionCount: 1,
   totalTokens: 0,
@@ -150,7 +150,7 @@ describe('ソースの識別表示（SPEC-DASH-087 / 089）', () => {
 
     // cwd ありグループ: basename ラベル（id の縮約形は出さない）
     expect(within(table).getByText('codex-proj', { selector: 'b' })).toBeTruthy();
-    expect(within(table).queryByText('codex:-home-dev-codex-proj', { selector: 'b' })).toBeNull();
+    expect(within(table).queryByText('-home-dev-codex-proj', { selector: 'b' })).toBeNull();
     // cwd 欠損の日付フォールバックグループ: id（日付）ラベル
     expect(within(table).getByText('2026-08-06', { selector: 'b' })).toBeTruthy();
   });

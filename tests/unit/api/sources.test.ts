@@ -15,8 +15,8 @@ import { assistantLine, writeJsonl } from '../../helpers/fixtures.js';
 
 const PROJECT_CLAUDE = '-home-dev-sample-project';
 const SESSION_CLAUDE = 's0000000-0000-4000-8000-0000000000s1';
-// cwd グルーピング（#45）後のグループ id: codex: + cwd の非英数字 - 置換
-const CODEX_GROUP = 'codex:-home-user-synthetic-project';
+// cwd グルーピング（#45）+ ソース中立化（#49）後のグループ id: cwd の非英数字 - 置換（接頭辞なし）
+const CODEX_GROUP = '-home-user-synthetic-project';
 const CODEX_ROLLOUT = 'rollout-2026-02-02T00-00-00-00000000-0000-7000-8000-0000000000c1';
 const SESSION_CODEX = `codex:${CODEX_ROLLOUT}`;
 
@@ -159,16 +159,16 @@ describe('source クエリによる絞り込み', () => {
 });
 
 describe('DTO の source / records', () => {
-  it('SPEC-DASH-083: プロジェクト一覧・セッション一覧・検索ヒット・セッション要約に source が含まれる', async () => {
+  it('SPEC-DASH-083: プロジェクト一覧・詳細は sources（配列）、セッション行・検索ヒット・セッション要約は source を含む（#49 改定）', async () => {
     const overview = await request(app).get('/api/overview');
-    const bySource = new Map(
-      overview.body.projects.map((p: { id: string; source: string }) => [p.id, p.source]),
+    const bySources = new Map(
+      overview.body.projects.map((p: { id: string; sources: string[] }) => [p.id, p.sources]),
     );
-    expect(bySource.get(PROJECT_CLAUDE)).toBe('claude');
-    expect(bySource.get(CODEX_GROUP)).toBe('codex');
+    expect(bySources.get(PROJECT_CLAUDE)).toEqual(['claude']);
+    expect(bySources.get(CODEX_GROUP)).toEqual(['codex']);
 
     const project = await request(app).get(`/api/projects/${CODEX_GROUP}`);
-    expect(project.body.source).toBe('codex');
+    expect(project.body.sources).toEqual(['codex']);
     expect(project.body.sessions[0].source).toBe('codex');
 
     const session = await request(app).get(`/api/sessions/${encodeURIComponent(SESSION_CODEX)}`);

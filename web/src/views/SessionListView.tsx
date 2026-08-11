@@ -8,7 +8,7 @@ import { api } from '../api';
 import type { ProjectDetail } from '../api';
 import { ComboChart } from '../components/ComboChart';
 import { assignModelColors } from '../lib/colors';
-import { SourceBadge } from '../lib/source';
+import { SourceBadge, sourceLabel } from '../lib/source';
 import { formatTokens, formatUsd } from '../lib/format';
 import { routeHash } from '../router';
 import type { SessionListItem } from '../lib/types';
@@ -156,11 +156,24 @@ export function SessionListView({ projectId }: { projectId: string }) {
       <div className="chathead">
         {/* 主ラベルはソース不問で cwd 末尾。path の無いグループは id（SPEC-DASH-087） */}
         <span className="t">{detail?.path?.split('/').at(-1) ?? projectId}</span>
-        {detail !== undefined && <SourceBadge source={detail.source} />}
+        {/* 統合プロジェクトは構成ソースのバッジを全て並べる（SPEC-DASH-113） */}
+        {detail?.sources.map((s) => <SourceBadge key={s} source={s} />)}
         <span className="badge">{detail?.sessions.length ?? '…'} セッション</span>
         <span className="badge">{formatTokens(totalTokensAll)} tok</span>
         <span className="badge">{formatUsd(totalCostAll)} 推定</span>
         {detail?.path && <div className="sub mono">{detail.path}</div>}
+        {/* 複数ソースのときだけソース別内訳を出す（SPEC-DASH-114。単一ソースは従来の見た目のまま） */}
+        {detail !== undefined && detail.sources.length > 1 && (
+          <div className="sub" data-testid="source-breakdown">
+            {detail.bySource.map((b, i) => (
+              <span key={b.source}>
+                {i > 0 && ' ／ '}
+                {sourceLabel(b.source)}: {b.sessions} セッション ・ {formatTokens(b.totalTokens)} tok ・{' '}
+                {formatUsd(b.estimatedCost)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="dashwrap">
         {error !== undefined && <div className="note err">読み込みに失敗しました: {error}</div>}

@@ -4,16 +4,19 @@
 import { Router } from 'express';
 import { dailyOverview, filterByRange, tokenTotals, tokensByModel } from '../aggregate.js';
 import { estimateRecordsCost } from '../cost.js';
-import { parseRange, parseSource, parseTzOffset, projectsBySource, wrap } from '../http.js';
-import type { ApiContext } from '../http.js';
+import { displayProjects, parseRange, parseSource, parseTzOffset, wrap } from '../http.js';
+import type { ApiContext, DisplayProject } from '../http.js';
 import type { ProjectEntry } from '../store.js';
 import type { PriceTable } from '../cost.js';
 import type { IndexRecord } from '../core/types.js';
 
 export interface ProjectListItem {
   id: string;
-  /** グループを発見したソース id（SPEC-DASH-083）。UI のバッジ・行ラベル切替に使う。 */
-  source: string;
+  /**
+   * 表示プロジェクトを構成するソース id の一覧（SPEC-DASH-083 改定・SPEC-DASH-110）。
+   * 単一ソースは要素 1。UI のバッジ・未集計表示の判定に使う。
+   */
+  sources: string[];
   /**
    * セッションの cwd 由来の実パス（SPEC-CHAT-004）。ディレクトリ名は `/` が `-` に
    * 変換された不可逆形式なので復号せず、ログの cwd を正とする。cwd が無ければ null。
@@ -46,27 +49,40 @@ export function projectPath(project: ProjectEntry): string | null {
   return path;
 }
 
+/** 表示プロジェクトの実パス。rootPath を持つエントリを優先し、無ければ各エントリの従来規則。 */
+export function displayPath(display: DisplayProject): string | null {
+  for (const entry of display.entries) {
+    if (entry.rootPath !== undefined) return entry.rootPath;
+  }
+  for (const entry of display.entries) {
+    const path = projectPath(entry);
+    if (path !== null) return path;
+  }
+  return null;
+}
+
 /** プロジェクト一覧の 1 行。/api/projects と Overview のプロジェクト一覧で共用する。 */
 export function projectListItem(
-  project: ProjectEntry,
+  display: DisplayProject,
   table: PriceTable,
   filter?: (records: IndexRecord[]) => IndexRecord[],
 ): ProjectListItem {
-  const records = project.sessions.flatMap((s) => s.index.records);
+  const sessions = display.entries.flatMap((e) => e.sessions);
+  const records = sessions.flatMap((s) => s.index.records);
   const filtered = filter ? filter(records) : records;
   const tokens = tokenTotals(filtered);
 
   let lastTimestamp: string | null = null;
-  for (const session of project.sessions) {
+  for (const session of sessions) {
     const last = session.index.summary.lastTimestamp;
     if (last && (!lastTimestamp || last > lastTimestamp)) lastTimestamp = last;
   }
 
   return {
-    id: project.id,
-    source: project.sourceId,
-    path: projectPath(project),
-    sessionCount: project.sessions.length,
+    id: display.id,
+    sources: display.entries.map((e) => e.sourceId),
+    path: displayPath(display),
+    sessionCount: sessions.length,
     totalTokens: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreation,
     estimatedCost: estimateRecordsCost(filtered, table).total,
     records: filtered.length,
@@ -83,17 +99,18 @@ export function overviewRoutes(ctx: ApiContext): Router {
       const { from, to } = parseRange(req.query);
       const tzOffset = parseTzOffset(req.query);
       const [snapshot, table] = await Promise.all([ctx.load(), ctx.loadTable()]);
-      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
+      const projects = displayProjects(snapshot, parseSource(req.query, snapshot));
 
-      const all = projects.flatMap((p) => p.sessions.flatMap((s) => s.index.records));
+      const entries = projects.flatMap((p) => p.entries);
+      const all = entries.flatMap((p) => p.sessions.flatMap((s) => s.index.records));
       const records = filterByRange(all, from, to, tzOffset);
       const inRange = (rs: IndexRecord[]): IndexRecord[] => filterByRange(rs, from, to, tzOffset);
 
       let sessions = 0;
       let skippedLines = 0;
-      for (const project of projects) {
-        sessions += project.sessions.length;
-        for (const session of project.sessions) {
+      for (const entry of entries) {
+        sessions += entry.sessions.length;
+        for (const session of entry.sessions) {
           skippedLines += session.index.summary.skippedLineCount;
         }
       }

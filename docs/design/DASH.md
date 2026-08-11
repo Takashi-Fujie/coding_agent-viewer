@@ -1,6 +1,6 @@
 # SPEC-DASH — ダッシュボード（詳細設計書）
 
-担当 Issue: #7（初版）→ #31（ソース切替・Codex 統合。末尾のセクション）。人間向けの基本仕様書は [docs/spec/DASH.md](../spec/DASH.md)。画面の正本は [docs/mockups/viewer-mock.html](../mockups/viewer-mock.html)（subagent 実行トレースと「その他」集約行は対象外 — 基本仕様書「この Issue で扱わないもの」参照）。
+担当 Issue: #7（初版）→ #31（ソース切替・Codex 統合。末尾のセクション）→ #49（同一プロジェクトの Claude / Codex 表示統合）。人間向けの基本仕様書は [docs/spec/DASH.md](../spec/DASH.md)。画面の正本は [docs/mockups/viewer-mock.html](../mockups/viewer-mock.html)（subagent 実行トレースと「その他」集約行は対象外 — 基本仕様書「この Issue で扱わないもの」参照）。
 
 ## データモデル
 
@@ -267,3 +267,70 @@ Tools & Agents は実ログからツールランキング・失敗率（is_error
 hook 発火履歴（PostToolUse / SessionStart 等）・エージェント定義 8 件 × 起動実績・
 Skill 履歴（最終使用日時付き）を描画できることをレンダリングで確認。
 日付クリック絞り込み（チップ・解除・該当なし）とドリルダウン遷移も実ログで動作確認済み。
+
+---
+
+# 同一プロジェクトの Claude / Codex 表示統合（Issue #49）
+
+基本仕様書は [docs/spec/DASH.md](../spec/DASH.md) の同名セクション。store / API 層のマージ機構（`DisplayProject`・グループ id のソース中立化・部分表示の判定規則）は [CORE.md](CORE.md) の同名セクション（SPEC-CORE-091〜096）。
+
+## API（DTO 変更）
+
+- **`ProjectListItem.source: string` → `sources: string[]`**（SPEC-DASH-083 改定）。表示グループを構成するソース id の配列（entries の出現順 = ソース登録順。単一ソースは要素 1 の配列）。`/api/projects/:id` のトップレベル `source` も同様に `sources` へ変える。セッション行・検索ヒット・`GET /api/sessions/:id` の `source` は**単数のまま**（セッションは常に単一ソース）
+- 統合行の集計は entries 全セッションの合算: `sessionCount` / `totalTokens` / `estimatedCost` / `records` / `lastTimestamp`（max）。`path` は rootPath を持つエントリを優先し、無ければ従来の最新セッション cwd 規則
+- **`/api/projects/:id` に `bySource` を追加**: 範囲フィルタ後のソース別内訳。単一ソースのプロジェクトでも返す（形を条件分岐させない。UI 側で出し分ける）
+
+```jsonc
+{ "id": "...", "sources": ["claude", "codex"], "path": "...",
+  "bySource": [{ "source": "claude", "sessions": 8, "records": 1200,
+                 "totalTokens": 3400000, "estimatedCost": 12.3 }, ...],
+  "daily": [...], "sessions": [...] }  // sessions は entries の連結（各行の source / worktree は従来どおり）
+```
+
+- 日次チャート系列（`daily`）は両ソース合算のモデル別のまま（Codex のモデルが同じ系列空間に混ざる。ソース別分割はしない）
+- エンドポイント・クエリの追加は無し（[API.md](API.md) の表は変更なし）
+
+## 画面
+
+- **OverviewView（一覧行）**: `SourceBadge` を `sources` の全要素分並べる。未集計表示の条件を `p.source !== 'claude'` から **`!p.sources.includes('claude')`** に変える（統合行は claude を含むため数値表示になる。codex-only 行は従来どおり未集計表示）
+- **SessionListView（詳細ヘッダ）**: バッジを `sources` 全要素分並べる。`sources.length > 1` のときだけヘッダ合計の下にソース別内訳（`bySource` のセッション数・トークン・コスト）を 1 行で表示する。単一ソースでは内訳を描画せず従来の見た目のまま
+- セッション行・worktree グループ分け・日付クリック絞り込み（records > 0）は変更なし。ソース切替は既存の `source` クエリ連動のまま（部分表示の挙動はサーバ側 SPEC-CORE-093 で決まる）
+
+## 既存 SPEC の改定（#49）
+
+| ID | 改定内容 |
+|---|---|
+| `SPEC-DASH-081` / `SPEC-DASH-082` | 「指定ソースだけの合計・一覧になる」は維持。ただしグループの単位が表示グループになり、統合プロジェクトは行が残って値が選択ソース分になる（部分表示。SPEC-CORE-093） |
+| `SPEC-DASH-083` | プロジェクト系 DTO の `source` → `sources: string[]`。セッション・検索ヒットは単数のまま。対応テストも書き換え |
+| `SPEC-DASH-085` | 切替で「選択ソースだけの値になる」は維持。統合行が消えずに部分表示になる点を明記 |
+| `SPEC-DASH-087` | 行ラベル規則は不変（ソース不問で basename）。バッジが複数になり得る点のみ |
+| `SPEC-DASH-090` E2E | 「Claude を選ぶと Codex グループが消える」→「codex-only グループが消え、統合グループは Claude のみの値で残る」。対応テストも書き換え |
+| `SPEC-CODEX-100〜105` | グループ id の `codex:` 接頭辞を廃止（CORE.md SPEC-CORE-091〜095 に改定内容を記載）。対応テストも書き換え |
+
+## 受け入れ基準（Issue #49・API / 画面）
+
+### API
+
+- [x] `SPEC-DASH-110` プロジェクト一覧の統合行は 1 行になり、sources に両ソースを含み、セッション数・トークン・コスト・records・lastTimestamp が両ソースの合算になる（path は本体ルート）
+- [x] `SPEC-DASH-111` /api/projects/:id は統合 id で両ソースのセッションを返し、範囲フィルタ後のソース別内訳 bySource を含む
+- [x] `SPEC-DASH-112` source クエリ指定時、統合プロジェクトの詳細は選択ソースのセッション・集計だけになり、id・URL は統合 id のまま変わらない
+
+### 画面
+
+- [x] `SPEC-DASH-113` 統合行にはソースバッジが複数表示され、未集計表示は sources に claude を含まない行だけに出る
+- [x] `SPEC-DASH-114` プロジェクト詳細のヘッダは複数ソースのときだけソース別内訳（セッション数・トークン・コスト）を表示し、単一ソースでは従来の見た目のまま
+
+### E2E（tests/e2e）
+
+- [x] `SPEC-DASH-115` 同一 cwd の claude / codex seed でプロジェクト一覧が 1 行になり、両ソースバッジと合算値が描画される
+- [x] `SPEC-DASH-116` ソース切替で統合行が残って値が選択ソース分になり、`codex:` 付き旧プロジェクト URL は 404 になる
+
+## 実測（#49・2026-08-11）
+
+- 実ログ（claude 38 / codex 24 セッション）でプロジェクト一覧が 22 行になり、統合行は 2 件
+  （agent_viewer: claude 30 + codex 2 の 32 セッション、Game: claude + codex）。`codex:` 接頭辞の id は一覧に 0 件
+- 統合プロジェクト詳細の bySource: claude 30 セッション / 11,908 records、codex 2 セッション / 75 records。
+  sessions 配列の合計（32）と一致
+- ソース切替の部分表示: codex 選択で統合行が sources=['codex']・2 セッションになり（16 行）、
+  claude 選択で 30 セッション（8 行）。`codex:` 付き旧 URL は 404・統合 id の URL は 200
+- verify 全 pass（unit 341 / E2E 29）・report 照合 OK・spec:check 乖離なし（claude 集計は前後不変）

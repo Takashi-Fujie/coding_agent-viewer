@@ -16,19 +16,21 @@ import { E2E_CLAUDE_DIR, E2E_LOG_DIR, codexDayId } from './support/env.js';
 const nav = '[data-testid="source-switch"]';
 const table = '[data-testid="project-table"]';
 
-test('SPEC-DASH-090: 切替で「Codex」を選ぶと Overview が Codex グループだけになり、「Claude」を選ぶと Codex グループが消えて従来値と一致する', async ({
+test('SPEC-DASH-090: 切替で codex-only グループが消え、統合グループは選択ソースの値で残る（#49 改定。旧: Codex グループが消える）', async ({
   page,
 }) => {
   await page.goto('/');
-  // 全ソース: Claude プロジェクトと Codex グループ（cwd 末尾ラベル。#45）が並ぶ
+  // 全ソース: Claude プロジェクト（Codex と統合済み）と codex-only グループが並ぶ
   await expect(page.locator(table)).toContainText('sample-project');
   await expect(page.locator(table)).toContainText('sample-codex');
   const allCost = await page.getByTestId('tile-cost').textContent();
 
+  // Codex 選択: codex-only は残り、統合プロジェクトの行も部分表示で残る（#49 改定）
   await page.locator(nav).getByRole('button', { name: 'Codex' }).click();
-  await expect(page.locator(table)).not.toContainText('sample-project');
   await expect(page.locator(table)).toContainText('sample-codex');
+  await expect(page.locator(table)).toContainText('sample-project');
 
+  // Claude 選択: codex-only グループは消え、統合プロジェクトは Claude のみの値で残る
   await page.locator(nav).getByRole('button', { name: 'Claude' }).click();
   await expect(page.locator(table)).toContainText('sample-project');
   await expect(page.locator(table)).not.toContainText('sample-codex');

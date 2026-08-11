@@ -2,14 +2,14 @@
  * GET /api/projects, /api/projects/:id。仕様は docs/design/API.md（SPEC-API-020〜022）。
  */
 import { Router } from 'express';
-import { dailyByModel, filterByRange } from '../aggregate.js';
+import { dailyByModel, filterByRange, tokenTotals } from '../aggregate.js';
 import { estimateRecordsCost } from '../cost.js';
-import { HttpError, parseRange, parseSource, parseTzOffset, projectsBySource, wrap } from '../http.js';
+import { HttpError, displayProjects, parseRange, parseSource, parseTzOffset, wrap } from '../http.js';
 import type { ApiContext } from '../http.js';
-import type { SessionEntry } from '../store.js';
+import type { ProjectEntry, SessionEntry } from '../store.js';
 import type { PriceTable } from '../cost.js';
 import type { IndexRecord } from '../core/types.js';
-import { projectListItem, projectPath } from './overview.js';
+import { displayPath, projectListItem } from './overview.js';
 
 /**
  * セッション一覧の 1 行。トークン・コストは範囲フィルタ後のレコードで計算する
@@ -48,6 +48,26 @@ function sessionListItem(
   };
 }
 
+/**
+ * ソース別内訳の 1 行（SPEC-DASH-111）。統合プロジェクトのヘッダ表示用に、
+ * 範囲フィルタ後のレコードでエントリ（= 単一ソースのグループ）ごとの集計を出す。
+ */
+function sourceBreakdown(
+  entry: ProjectEntry,
+  table: PriceTable,
+  filter: (records: IndexRecord[]) => IndexRecord[],
+): Record<string, unknown> {
+  const records = filter(entry.sessions.flatMap((s) => s.index.records));
+  const tokens = tokenTotals(records);
+  return {
+    source: entry.sourceId,
+    sessions: entry.sessions.length,
+    records: records.length,
+    totalTokens: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreation,
+    estimatedCost: estimateRecordsCost(records, table).total,
+  };
+}
+
 export function projectRoutes(ctx: ApiContext): Router {
   const router = Router();
 
@@ -55,7 +75,7 @@ export function projectRoutes(ctx: ApiContext): Router {
     '/api/projects',
     wrap(async (req, res) => {
       const [snapshot, table] = await Promise.all([ctx.load(), ctx.loadTable()]);
-      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
+      const projects = displayProjects(snapshot, parseSource(req.query, snapshot));
       res.json(projects.map((p) => projectListItem(p, table)));
     }),
   );
@@ -66,29 +86,26 @@ export function projectRoutes(ctx: ApiContext): Router {
       const { from, to } = parseRange(req.query);
       const tzOffset = parseTzOffset(req.query);
       const [snapshot, table] = await Promise.all([ctx.load(), ctx.loadTable()]);
-      const projects = projectsBySource(snapshot, parseSource(req.query, snapshot));
+      const projects = displayProjects(snapshot, parseSource(req.query, snapshot));
 
       const project = projects.find((p) => p.id === req.params['id']);
       if (!project) {
         throw new HttpError(404, `プロジェクトが見つかりません: ${req.params['id']}`);
       }
 
-      const records = filterByRange(
-        project.sessions.flatMap((s) => s.index.records),
-        from,
-        to,
-        tzOffset,
-      );
+      const inRange = (rs: IndexRecord[]): IndexRecord[] => filterByRange(rs, from, to, tzOffset);
+      const sessions = project.entries.flatMap((e) => e.sessions);
+      const records = inRange(sessions.flatMap((s) => s.index.records));
 
       res.json({
         id: project.id,
-        source: project.sourceId,
-        path: projectPath(project),
+        sources: project.entries.map((e) => e.sourceId),
+        path: displayPath(project),
         range: { from: from ?? null, to: to ?? null },
         daily: dailyByModel(records, table, tzOffset),
-        sessions: project.sessions.map((s) =>
-          sessionListItem(s, table, (rs) => filterByRange(rs, from, to, tzOffset)),
-        ),
+        // 範囲フィルタ後のソース別内訳（SPEC-DASH-111）。単一ソースでも形を変えず返す
+        bySource: project.entries.map((e) => sourceBreakdown(e, table, inRange)),
+        sessions: sessions.map((s) => sessionListItem(s, table, inRange)),
       });
     }),
   );

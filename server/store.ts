@@ -27,7 +27,11 @@ export interface SessionEntry {
 }
 
 export interface ProjectEntry {
-  /** グループ ID（claude は ~/.claude/projects 直下のディレクトリ名）。API の project id。 */
+  /**
+   * グループ ID（claude は ~/.claude/projects 直下のディレクトリ名、codex の cwd グループは
+   * 同形式のパス縮約）。ソース中立のため単独では一意でなく、一意キーは (id, sourceId)
+   * （SPEC-CORE-092。同一 id の claude / codex グループは表示層で 1 プロジェクトに束ねる）。
+   */
   id: string;
   /** グループを発見したソース（1 グループ 1 ソース。ソースをまたぐ併合はしない）。 */
   sourceId: string;
@@ -86,10 +90,12 @@ export async function loadSnapshot(options: StoreOptions): Promise<Snapshot> {
   return { projects: await consolidateWorktrees(regroupCodexByCwd(projects)), sessionsById, sourcesById };
 }
 
-/** Codex グループ id: `codex:` + cwd の非英数字 `-` 置換（SPEC-CODEX-100）。
- * cwd 由来の縮約形は claude の id と構造的に衝突するため接頭辞を付ける（docs/design/DASH.md の記録判断）。 */
-function codexGroupId(cwd: string): string {
-  return `codex:${cwd.replace(/[^A-Za-z0-9]/g, '-')}`;
+/** パス由来のグループ id: cwd の非英数字 `-` 置換（SPEC-CORE-091）。
+ * claude の実ディレクトリ名と同値のソース中立形式。同一 id の claude / codex グループは
+ * 表示層（server/http.ts の displayProjects）で 1 プロジェクトに束ねられる。
+ * ProjectEntry の一意キーは (id, sourceId)。 */
+function pathGroupId(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
 }
 
 /**
@@ -117,7 +123,7 @@ function regroupCodexByCwd(projects: ProjectEntry[]): ProjectEntry[] {
         remaining.push(session);
         continue;
       }
-      const id = codexGroupId(cwd);
+      const id = pathGroupId(cwd);
       let group = byCwd.get(id);
       if (group === undefined) {
         group = { id, sourceId: 'codex', sessions: [] };
@@ -165,8 +171,8 @@ const CONSOLIDATED_SOURCES = new Set(['claude', 'codex']);
  *
  * 対象ソースのグループごとに代表 cwd を git の正式な仕組み（resolveRepo）で解決し、
  * worktree 由来のグループを本体ルートのグループへ併合する。本体グループが無ければ
- * 本体ルートから同形式の id を合成する（claude は非英数字 `-` 置換、codex は
- * `codex:` 接頭辞付きの同縮約）。併合先の解決はソース内に閉じる（同じ本体ルートでも
+ * 本体ルートから同形式の id（非英数字 `-` 置換・ソース不問）を合成する。
+ * 併合先の解決はソース内に閉じる（同じ本体ルートでも
  * claude と codex のグループは併合しない）。解決は毎回 fs を見るだけで
  * キャッシュ等の永続状態に依存しない。
  */
@@ -209,12 +215,9 @@ async function consolidateWorktrees(projects: ProjectEntry[]): Promise<ProjectEn
     const key = targetKey(project.sourceId, resolution.root);
     let target = targetByRoot.get(key);
     if (target === undefined) {
-      // 本体のグループが無い場合は同形式の id を合成する（SPEC-CORE-086 / SPEC-CODEX-105）
+      // 本体のグループが無い場合は同形式の id を合成する（SPEC-CORE-086 / SPEC-CORE-095）
       target = {
-        id:
-          project.sourceId === 'codex'
-            ? codexGroupId(resolution.root)
-            : resolution.root.replace(/[^A-Za-z0-9]/g, '-'),
+        id: pathGroupId(resolution.root),
         sourceId: project.sourceId,
         rootPath: resolution.root,
         sessions: [],

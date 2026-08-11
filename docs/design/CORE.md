@@ -114,6 +114,43 @@ function resolveRepo(cwd: string): Promise<RepoResolution | null>;
 `/api/overview` の records / sessions / cost 合計は統合前後で完全一致（統合は見せ方のみの変更）。
 `npm run report` も照合 OK。
 
+## 同一プロジェクトの Claude / Codex 表示統合（Issue #49）
+
+基本仕様書は [docs/spec/CORE.md](../spec/CORE.md) の同名セクション。画面・DTO は [DASH.md](DASH.md) 側。
+
+### グループ id のソース中立化（store 層）
+
+- `server/store.ts` の `codexGroupId(cwd)` から **`codex:` 接頭辞を外す**（`cwd.replace(/[^A-Za-z0-9]/g, '-')` のみ。claude の id 縮約と同一の式になる）。worktree 併合の合成 id（SPEC-CODEX-105 の codex 分岐）も同様に接頭辞なしへ変える
+- これにより **`ProjectEntry.id` はグループの一意キーでなくなる**。一意キーは **(id, sourceId)** の組。同じ本体ルートの claude / codex グループは同一 id・別 sourceId で snapshot に並ぶ（グループはソース別のまま = 1 グループ 1 ソース維持）
+- Claude の実ディレクトリ名（例: `-Users-x-proj`）はこの縮約と同値であることを実測確認済み（2026-08-11）。既存 claude グループの id は不変
+- cwd を持たない日付フォールバックグループの id（`YYYY-MM-DD`）は不変。パス由来 id を持たないため統合対象外
+- **セッション id（`codex:` 接頭辞）とキャッシュパス（ソース × セッション）は変更しない**（変更が必要になったらスコープ逸脱）
+
+### 表示グループ（API 層のマージ）
+
+```ts
+// server/http.ts
+/** 同一 id のソース別グループを表示用に束ねたもの。 */
+interface DisplayProject {
+  id: string;
+  /** 同一 id を構成するソース別グループ（1 件なら従来と同じ単一ソースの行）。 */
+  entries: ProjectEntry[];
+}
+/** projectsBySource を置き換える。source 指定時は部分表示（下記）。 */
+function displayProjects(snapshot: Snapshot, source: string | undefined): DisplayProject[];
+```
+
+- `snapshot.projects` を id でグループ化する。並びは**先頭出現位置**（claude 群 → codex 群の従来順のまま、統合行は claude 側の位置に現れる）
+- **source 指定時（部分表示）**: 選択ソースの**グループ（エントリ）**を持つ表示グループだけ残し、entries を選択ソース分に絞る。判定はエントリの有無であってセッション数ではない（セッション 0 件の claude 空グループは claude 選択で従来どおり残る。codex-only プロジェクトは claude 選択で消える）
+- `/api/projects/:id` の探索は表示グループの id 一致になる。`codex:` 付き旧 id はどのグループの id にも一致しないため**自動的に 404**
+- `/api/stats/tools` の byProject は Map の id キー集計のため、同一 id の 2 グループが**自動的に 1 バケットへ合算**される（変更不要であることをテストで担保）
+- 検索ヒット・セッション DTO の projectId は store 側の id 変更に自動追随する（route 層での id 変換は置かない — 変換漏れで `codex:` id が漏れる事故を構造的に防ぐ）
+
+### テスト方針
+
+- 一時ディレクトリに claude 形式（`projects/<縮約名>/*.jsonl`）と codex 形式（`sessions/YYYY/MM/DD/rollout-*.jsonl`・session_meta の cwd を同一パスに）の両ソースを手組みし、統合・部分表示・404 を supertest で検証する
+- worktree 併合との複合（codex worktree セッション → 本体 codex グループ → claude グループと表示統合）を 1 ケース含める
+
 ## 実測（Issue #2 時点）
 
 | 指標 | 値 |
@@ -201,6 +238,15 @@ function resolveRepo(cwd: string): Promise<RepoResolution | null>;
 - [x] `SPEC-CORE-088` 併合後のプロジェクトの表示パスは本体ルートになる（worktree セッションが最新でも worktree パスにしない）
 - [x] `SPEC-CORE-089` 旧 worktree グループの id は projects 一覧に現れない（/api/projects/:id は 404 になる）
 - [x] `SPEC-CORE-090` worktree 併合の併合先はソース内でのみ解決され、同じ本体ルートでも claude と codex のグループは併合されない（#45 改定。旧: Codex ソースのグループは併合対象にしない）
+
+### 同一プロジェクトの Claude / Codex 表示統合（Issue #49）
+
+- [x] `SPEC-CORE-091` codex の cwd グループ id は接頭辞なしのパス縮約になり、`codex:` 付きグループ id は一覧にも /api/projects/:id にも現れない（旧 id は 404）
+- [x] `SPEC-CORE-092` 同一 id の claude / codex グループは表示上 1 プロジェクトに束ねられ、内部データはソース別グループのまま維持される（一意キーは id + ソース）
+- [x] `SPEC-CORE-093` source 指定時は選択ソースのグループを持つプロジェクトだけが残り、値は選択ソース分になる（codex-only プロジェクトは claude 選択で消え、セッション 0 件の claude 空グループは従来どおり残る）
+- [x] `SPEC-CORE-094` cwd を持たない日付フォールバックグループは統合されず従来どおり単独で表示される
+- [x] `SPEC-CORE-095` worktree 併合の合成 id も接頭辞なしになり、ソースをまたぐ併合はされない（同一本体ルートの claude / codex は別グループのまま表示層で束ねる）
+- [x] `SPEC-CORE-096` claude ソース単独の環境では一覧・詳細・集計の id・値・並びが従来と一致する（プロジェクト DTO の source → sources 改名を除き既存テスト不変）
 
 ### 実測値照合レポート（Issue #4・`scripts/report.ts`）
 

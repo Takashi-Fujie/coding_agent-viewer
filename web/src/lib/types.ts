@@ -64,8 +64,8 @@ export interface SessionDetail {
 /** GET /api/projects の 1 要素（簡易入口用。#7 で本実装に置き換える）。 */
 export interface ProjectListItem {
   id: string;
-  /** グループを発見したソース id（SPEC-DASH-083）。 */
-  source: string;
+  /** 表示プロジェクトを構成するソース id の一覧（SPEC-DASH-083 改定・#49。単一ソースは要素 1）。 */
+  sources: string[];
   /** セッションの cwd 由来の実パス（SPEC-CHAT-004）。cwd が取れないときは null。 */
   path: string | null;
   sessionCount: number;

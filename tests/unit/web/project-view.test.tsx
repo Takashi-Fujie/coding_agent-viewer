@@ -15,8 +15,10 @@ afterEach(() => {
 
 const PROJECT = {
   id: '-home-dev-project-a',
+  sources: ['claude'],
   path: '/home/dev/project-a',
   range: { from: null, to: null },
+  bySource: [{ source: 'claude', sessions: 1, records: 312, totalTokens: 4_200_000, estimatedCost: 1.84 }],
   daily: [
     { date: '2026-08-05', byModel: { 'claude-opus-5': 4000, 'claude-sonnet-5': 1000 }, cost: 0.9 },
     { date: '2026-08-06', byModel: { 'claude-opus-5': 2000 }, cost: 0.4 },
@@ -86,9 +88,10 @@ function sessionRow(over: {
 
 const GROUPED_PROJECT = {
   id: '-home-dev-project-a',
-  source: 'claude',
+  sources: ['claude'],
   path: '/home/dev/project-a',
   range: { from: null, to: null },
+  bySource: [{ source: 'claude', sessions: 4, records: 40, totalTokens: 4000, estimatedCost: 0.4 }],
   daily: [{ date: '2026-08-05', byModel: { 'claude-opus-5': 4000 }, cost: 0.9 }],
   sessions: [
     sessionRow({ id: 's-m1', title: '本体の作業', worktree: null, lastTimestamp: '2026-08-06T10:00:00.000Z' }),
