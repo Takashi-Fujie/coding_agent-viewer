@@ -2,14 +2,26 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "viewer",
+      "name": "viewer-prod",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "serve"],
-      "port": 4518,
+      "port": 4517
+    },
+    {
+      "name": "viewer-owner-check",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "serve"],
+      "port": 4518
+    },
+    {
+      "name": "viewer-ai-check",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "serve"],
+      "port": 4519,
       "autoPort": true
     },
     {
-      "name": "viewer-web",
+      "name": "viewer-web-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:web"],
       "port": 5173
