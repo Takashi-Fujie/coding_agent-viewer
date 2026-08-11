@@ -81,6 +81,8 @@ export interface SessionListItem {
   id: string;
   /** セッションを発見したソース id（SPEC-DASH-083）。 */
   source: string;
+  /** worktree 統合されたセッションのラベル（SPEC-DASH-100）。本体・非統合は null。 */
+  worktree: string | null;
   /** 範囲フィルタ後のレコード件数（SPEC-DASH-084）。日別絞り込みの基準。 */
   records: number;
   title: string | null;

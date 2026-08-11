@@ -3,7 +3,7 @@
  * 日次モデル別チャート + セッション一覧。日付クリックはその日のセッションへの
  * 絞り込み（from = to の再取得。Overview と同じ方式）。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import type { ProjectDetail } from '../api';
 import { ComboChart } from '../components/ComboChart';
@@ -17,6 +17,42 @@ function formatWhen(iso: string | null): string {
   if (!iso) return '—';
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ja-JP');
+}
+
+/** セッション 1 行。グループ有無どちらの描画でも共用する。 */
+function sessionRow(s: SessionListItem, projectId: string) {
+  return (
+    <tr
+      key={s.id}
+      className="rowlink"
+      onClick={() => {
+        location.hash = routeHash({ view: 'session', projectId, sessionId: s.id });
+      }}
+    >
+      <td>
+        <b>{s.title ?? s.id}</b>
+        <SourceBadge source={s.source} />
+      </td>
+      <td className="mono">{s.models.join(', ')}</td>
+      <td className="num">{s.recordCount.toLocaleString()}</td>
+      {/* Codex の usage は #30 まで未集計（SPEC-DASH-089） */}
+      <td className="num">
+        {s.source !== 'claude' && s.totalTokens === 0 ? (
+          <span className="est">未集計</span>
+        ) : (
+          formatTokens(s.totalTokens)
+        )}
+      </td>
+      <td className="num">
+        {s.source !== 'claude' && s.estimatedCost === 0 ? (
+          <span className="est">未集計</span>
+        ) : (
+          formatUsd(s.estimatedCost)
+        )}
+      </td>
+      <td>{formatWhen(s.lastTimestamp)}</td>
+    </tr>
+  );
 }
 
 export function SessionListView({ projectId }: { projectId: string }) {
@@ -81,6 +117,31 @@ export function SessionListView({ projectId }: { projectId: string }) {
   const sessions = [...listSource].sort((a, b) =>
     (b.lastTimestamp ?? '').localeCompare(a.lastTimestamp ?? ''),
   );
+
+  // worktree グルーピング（SPEC-DASH-101〜103）。全セッションが本体（worktree null）なら
+  // グループ見出しを出さず従来と同じ表にする。並びは本体が先頭、worktree は
+  // グループ内最新の lastTimestamp の新しい順（sessions が降順ソート済みなので先頭要素で比較できる）
+  const groups = (() => {
+    if (!sessions.some((s) => s.worktree !== null && s.worktree !== undefined)) return null;
+    const byLabel = new Map<string | null, SessionListItem[]>();
+    for (const s of sessions) {
+      const key = s.worktree ?? null;
+      const list = byLabel.get(key);
+      if (list) list.push(s);
+      else byLabel.set(key, [s]);
+    }
+    const wtLabels = [...byLabel.keys()].filter((k): k is string => k !== null);
+    wtLabels.sort((a, b) =>
+      (byLabel.get(b)?.[0]?.lastTimestamp ?? '').localeCompare(
+        byLabel.get(a)?.[0]?.lastTimestamp ?? '',
+      ),
+    );
+    const main = byLabel.get(null);
+    return [
+      ...(main ? [{ label: '本体', sessions: main }] : []),
+      ...wtLabels.map((label) => ({ label, sessions: byLabel.get(label) ?? [] })),
+    ];
+  })();
 
   const totalTokensAll = detail?.sessions.reduce((s, x) => s + x.totalTokens, 0) ?? 0;
   const totalCostAll = detail?.sessions.reduce((s, x) => s + x.estimatedCost, 0) ?? 0;
@@ -167,38 +228,20 @@ export function SessionListView({ projectId }: { projectId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((s) => (
-                  <tr
-                    key={s.id}
-                    className="rowlink"
-                    onClick={() => {
-                      location.hash = routeHash({ view: 'session', projectId, sessionId: s.id });
-                    }}
-                  >
-                    <td>
-                      <b>{s.title ?? s.id}</b>
-                      <SourceBadge source={s.source} />
-                    </td>
-                    <td className="mono">{s.models.join(', ')}</td>
-                    <td className="num">{s.recordCount.toLocaleString()}</td>
-                    {/* Codex の usage は #30 まで未集計（SPEC-DASH-089） */}
-                    <td className="num">
-                      {s.source !== 'claude' && s.totalTokens === 0 ? (
-                        <span className="est">未集計</span>
-                      ) : (
-                        formatTokens(s.totalTokens)
-                      )}
-                    </td>
-                    <td className="num">
-                      {s.source !== 'claude' && s.estimatedCost === 0 ? (
-                        <span className="est">未集計</span>
-                      ) : (
-                        formatUsd(s.estimatedCost)
-                      )}
-                    </td>
-                    <td>{formatWhen(s.lastTimestamp)}</td>
-                  </tr>
-                ))}
+                {groups === null
+                  ? sessions.map((s) => sessionRow(s, projectId))
+                  : groups.map((g) => (
+                      <Fragment key={g.label}>
+                        {/* worktree グループ見出し（SPEC-DASH-101） */}
+                        <tr data-testid="wt-group" className="wtgroup">
+                          <td colSpan={6}>
+                            <b>{g.label}</b>
+                            <span className="est">（{g.sessions.length} セッション）</span>
+                          </td>
+                        </tr>
+                        {g.sessions.map((s) => sessionRow(s, projectId))}
+                      </Fragment>
+                    ))}
                 {selectedDay !== null && daySessions !== undefined && sessions.length === 0 && (
                   <tr>
                     <td colSpan={6} className="note">

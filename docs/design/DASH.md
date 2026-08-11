@@ -213,6 +213,42 @@ tool_result（user レコード）には `tool_use_id` しか無い。ツール�
 - [x] `SPEC-DASH-092` 日付クリック絞り込みで usage 0 の Codex セッションが一覧に残る
 - [x] `SPEC-DASH-093` Codex セッションが無い seed では「Codex」選択肢が disabled 表示になる
 
+---
+
+# worktree グルーピング表示（Issue #41）
+
+基本仕様書は [docs/spec/DASH.md](../spec/DASH.md) の同名セクション。統合の判定・併合は [CORE.md](CORE.md) の「worktree セッションの本体統合」側（SPEC-CORE-080〜090）。
+
+## データモデル・API
+
+- `/api/projects/:id` のセッション行 DTO に `worktree: string | null` を追加する（`SessionEntry.worktree` をそのまま露出。本体・非統合セッションは null）。エンドポイントの追加・変更は無し
+- プロジェクト一覧・Overview は併合済みの snapshot をそのまま集計するため変更不要（行数・合算はストア側で確定している）
+
+## 画面（SessionListView）
+
+- セッション一覧を `worktree` 値でグループ分けし、グループ見出し（「本体」/ worktree 名）と件数を表示する
+- グループの並び: 本体が先頭、worktree はグループ内の最新 lastTimestamp の新しい順。グループ内の行順は従来どおり最終更新の新しい順
+- 全セッションの `worktree` が null のプロジェクトでは見出しを描画せず、従来と同一の表になる（worktree を使わない利用者の画面は変わらない）
+- 日付クリック絞り込み（`daySessions`）でも同じグループ分けを適用する（`records > 0` の絞り込みは従来どおり）
+
+## 受け入れ基準（Issue #41）
+
+### API
+
+- [x] `SPEC-DASH-100` /api/projects/:id のセッション行に worktree（worktree 名・本体は null）が含まれる
+
+### 画面
+
+- [x] `SPEC-DASH-101` プロジェクト詳細のセッション一覧が「本体」と worktree 名のグループ見出しに分かれ、各グループに件数が表示される
+- [x] `SPEC-DASH-102` グループは本体が先頭で worktree は最終更新の新しい順に並び、グループ内の行は最終更新の新しい順のまま
+- [x] `SPEC-DASH-103` worktree セッションの無いプロジェクトではグループ見出しを描画しない
+- [x] `SPEC-DASH-104` 日付クリック絞り込み中もグループ表示が保たれ、その日に活動のあるセッションだけが各グループに残る
+
+### E2E（tests/e2e）
+
+- [x] `SPEC-DASH-105` worktree セッションを含む seed で、Overview のプロジェクト一覧に worktree の行が現れず本体プロジェクトへ統合される
+- [x] `SPEC-DASH-106` 統合されたプロジェクトの詳細で「本体」と worktree 名のグループが描画される
+
 ## 実測値（2026-08-09・Issue #31 実装時）
 
 実ログで `/api/sources` が claude 27 / codex 21 セッションを返し、`source=codex` の

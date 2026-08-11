@@ -40,6 +40,18 @@ export function sessionFilePath(sessionId: string): string {
 /** 全文検索 E2E が探す一意な合成トークン。 */
 export const SEARCH_TOKEN = 'E2E検索専用トークンXYZQ';
 
+/* ---- worktree 統合（Issue #41） ---- */
+
+/** 合成の本体リポジトリ（実在する fs 構造として seed が組み立てる）。 */
+export const E2E_WT_REPO_ROOT = join(E2E_ROOT, 'repo');
+export const E2E_WT_NAME = 'wt-e2e';
+/** 本体側プロジェクト（cwd = E2E_WT_REPO_ROOT）。統合後の id はこれになる。 */
+export const E2E_WT_MAIN_PROJECT_ID = 'proj-e2e-wt-main';
+/** worktree 側プロジェクト（統合されて一覧から消える側）。 */
+export const E2E_WT_PROJECT_ID = 'proj-e2e-wt';
+export const SESSION_WT_MAIN = 's0000000-0000-4000-8000-0000000000e4';
+export const SESSION_WT = 's0000000-0000-4000-8000-0000000000e5';
+
 /* ---- Codex ソース（Issue #31） ---- */
 
 export const E2E_CODEX_DIR = join(E2E_ROOT, 'codex-sessions');

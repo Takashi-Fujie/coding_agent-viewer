@@ -59,6 +59,61 @@ API に返していた。実ログに 4 件実在）を表現するため。フ�
 
 発見のテストは一時ディレクトリに実命名規約（`rollout-<ISO日時（ハイフン区切り）>-<UUIDv7>.jsonl`）どおりのツリーを組み立てて検証する（`tests/fixtures/codex/` の内容フィクスチャは中身の契約用であり、発見テストには使わない）。
 
+## worktree セッションの本体統合（Issue #41）
+
+基本仕様書は [docs/spec/CORE.md](../spec/CORE.md) の同名セクション。画面のグルーピング表示は [DASH.md](DASH.md) 側。
+
+### データモデル
+
+```ts
+// server/core/worktree.ts（新設）
+/** cwd から git の正式な仕組みで本体リポジトリを解決した結果。 */
+interface RepoResolution {
+  /** 本体リポジトリのルート絶対パス。 */
+  root: string;
+  /**
+   * 統合時に使う worktree ラベル。実在する worktree なら worktree ルートのディレクトリ名、
+   * cwd 消失後の解決なら basename(cwd)。null は「cwd が本体リポジトリ内にある（統合不要）」。
+   */
+  worktree: string | null;
+}
+/** 解決不能（.git が見つからない）なら null。fs アクセスは stat / 小ファイル read のみ。 */
+function resolveRepo(cwd: string): Promise<RepoResolution | null>;
+```
+
+- `server/store.ts` の `ProjectEntry` に `rootPath?: string` を追加する（併合で確定した本体ルート。`projectPath()` は `rootPath` があればそれを優先する。無ければ従来どおり最新セッションの cwd — worktree セッションが最新のとき表示パスが worktree 側へ揺れるのを防ぐ）
+- `SessionEntry` に `worktree: string | null` を追加する（worktree ラベル。本体・非統合セッションは null。API DTO への露出は DASH 側）
+
+### 解決アルゴリズム
+
+1. **cwd が実在する場合**: cwd から親へ向かって最初の `.git` を探す
+   - `.git` が**ファイル** → worktree。`gitdir: <管理dir>` を読み、`<管理dir>/commondir`（相対パスは管理 dir 基準で解決）が指す共通 `.git` の親を本体ルートとする。worktree ルートは `.git` ファイルを含むディレクトリ
+   - `.git` が**ディレクトリ** → 通常リポジトリ。統合対象にしない（`worktreeRoot: null`。リポジトリ内サブディレクトリ起動のセッションを本体へ寄せる挙動変更はしない）
+2. **cwd が実在しない場合**（worktree 削除後）: 実在する最も近い祖先ディレクトリから親へ向かって `.git`（ファイル / ディレクトリ）を探す。見つかったリポジトリのルートを本体とし、worktree ラベルは `basename(cwd)` とする（worktree ルートはもう存在せず特定できないため）。この規則により、**削除済みのリポジトリ内サブディレクトリも本体へ統合される**（ディレクトリが消えた以上そのリポジトリの作業として扱うのが自然、という判断をここに残す）
+3. どちらでも `.git` に到達しなければ解決不能（null）。従来どおり単独プロジェクトのまま
+
+### 併合（loadSnapshot の後段）
+
+- 併合は **claude ソースのグループのみ**対象（Codex は日付グループで cwd ベースでないため対象外）
+- 発見・インデックス化の後、プロジェクトごとに代表 cwd（最新セッションの `summary.cwd`）で `resolveRepo` を呼ぶ（同一プロジェクト内のセッションは同じ起動 cwd を共有するため代表 1 回で足りる。cwd ごとにメモ化）
+- `worktreeRoot` が得られたプロジェクトを、本体ルートが代表 cwd と一致するプロジェクト（= 本体）へ併合する。併合後の id は**本体プロジェクトの従来 id**。本体プロジェクトが存在しない場合は、本体ルートの `[^A-Za-z0-9]` を `-` に置換した同形式の id を合成する
+- 併合したセッションの `projectId` は併合先 id に書き換え、`sessionsById` も併合後の値で引けるようにする。旧 worktree グループの id は projects 一覧から消える（`/api/projects/:id` は既存の 404 挙動に落ちる）
+- worktree ラベル: 実在時は `basename(worktreeRoot)`、削除後は `basename(cwd)`。本体セッションは null
+- 解決は毎リクエスト（loadSnapshot ごと）に行う。コストは claude プロジェクト数 × 祖先段数の stat / 小 read のみで、キャッシュ・スキーマ変更は不要（正しさを永続状態に依存させない）
+
+### テスト方針
+
+- 一時ディレクトリに worktree の実構造（`.git` ファイル + `gitdir:` 行、管理 dir の `commondir`）を**手組み**して検証する（実 `git worktree` コマンドに依存しない）
+- worktree 削除後のケースはディレクトリを作らない（または消す）ことで再現する
+- フィクスチャの cwd は合成パスのみ（public リポジトリのため実パスを書かない）
+
+### 実測値（2026-08-11・Issue #41 実装時）
+
+実ログで claude プロジェクトが 24 → 21 件（worktree 3 グループが本体へ統合）。本体プロジェクトは
+5 → 25 セッション（本体 5 + worktree 17/2/1 の合算と一致）。表示パスは本体ルートのまま。
+`/api/overview` の records / sessions / cost 合計は統合前後で完全一致（統合は見せ方のみの変更）。
+`npm run report` も照合 OK。
+
 ## 実測（Issue #2 時点）
 
 | 指標 | 値 |
@@ -132,6 +187,20 @@ API に返していた。実ログに 4 件実在）を表現するため。フ�
 - [x] `SPEC-CORE-077` ルートディレクトリが存在しないソースは空一覧を返し、エラーにしない
 - [x] `SPEC-CORE-078` アプリ構成には Claude ソースのみ登録され、既存 API レスポンスと集計値が変わらない
 - [x] `SPEC-CORE-079` .jsonl を含まないプロジェクトディレクトリも空グループとして返し、従来どおりセッション 0 件のプロジェクトとして API に現れる
+
+### worktree セッションの本体統合（Issue #41）
+
+- [x] `SPEC-CORE-080` cwd から親へ辿った最初の `.git` がファイルのとき、gitdir と commondir を解決して本体リポジトリのルートと worktree ルートを得る
+- [x] `SPEC-CORE-081` commondir の相対パスは管理ディレクトリ基準で解決する
+- [x] `SPEC-CORE-082` cwd が実在しないとき、実在する最も近い祖先から親へ `.git` を探して本体ルートを得る
+- [x] `SPEC-CORE-083` `.git` がディレクトリ（通常リポジトリ）の cwd は統合対象にしない
+- [x] `SPEC-CORE-084` どの祖先にも `.git` が無い cwd は解決不能として null を返し、プロジェクトは従来のまま単独で残る
+- [x] `SPEC-CORE-085` 本体ルートが同じ claude プロジェクトは 1 つに併合され、id は本体プロジェクトの従来 id になる
+- [x] `SPEC-CORE-086` 本体プロジェクトが存在しない場合は本体ルートから同形式の id（非英数字を `-` に置換）を合成して併合する
+- [x] `SPEC-CORE-087` 併合後のセッションは projectId が併合先になり、worktree ラベル（実在時は worktree ルート名・削除後は cwd 名）を持ち、本体セッションは null を持つ
+- [x] `SPEC-CORE-088` 併合後のプロジェクトの表示パスは本体ルートになる（worktree セッションが最新でも worktree パスにしない）
+- [x] `SPEC-CORE-089` 旧 worktree グループの id は projects 一覧に現れない（/api/projects/:id は 404 になる）
+- [x] `SPEC-CORE-090` Codex ソースのグループは併合対象にしない
 
 ### 実測値照合レポート（Issue #4・`scripts/report.ts`）
 
