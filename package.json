@@ -13,6 +13,7 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
+    "preserve": "npm run build:web",
     "serve": "tsx server/index.ts",
     "dev:web": "vite web",
     "build:web": "vite build web",
