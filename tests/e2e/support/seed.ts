@@ -16,12 +16,18 @@ import {
   E2E_PROJECT_ID,
   E2E_PROJECT_PATH,
   E2E_ROOT,
+  E2E_WT_MAIN_PROJECT_ID,
+  E2E_WT_NAME,
+  E2E_WT_PROJECT_ID,
+  E2E_WT_REPO_ROOT,
   LONG_TURNS,
   SEARCH_TOKEN,
   SESSION_LIVE,
   SESSION_LONG,
   SESSION_MAIN,
   SESSION_SAMPLE,
+  SESSION_WT,
+  SESSION_WT_MAIN,
   codexFilePath,
   sessionFilePath,
 } from './env.js';
@@ -43,6 +49,8 @@ interface LineOver {
   parentUuid: string | null;
   timestamp: string;
   sessionId: string;
+  /** 省略時は E2E_PROJECT_PATH。worktree 統合の seed（Issue #41）が上書きする。 */
+  cwd?: string;
 }
 
 function userLine(over: LineOver & { content: unknown }): Record<string, unknown> {
@@ -253,6 +261,68 @@ function toJsonl(lines: Record<string, unknown>[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
 }
 
+/**
+ * worktree 統合の seed（Issue #41・SPEC-DASH-105〜106）。
+ * 実在する worktree 構造（本体 .git ディレクトリ + worktree の .git ファイル / commondir）を
+ * E2E_ROOT 配下に組み立て、本体 / worktree それぞれの cwd を持つセッションを置く。
+ * 既知モデルのみ・SEARCH_TOKEN 無しで、既存 dash.spec の集計 assert を壊さない。
+ */
+async function seedWorktree(): Promise<void> {
+  const adminDir = join(E2E_WT_REPO_ROOT, '.git', 'worktrees', E2E_WT_NAME);
+  const worktreeRoot = join(E2E_WT_REPO_ROOT, '.claude', 'worktrees', E2E_WT_NAME);
+  await mkdir(adminDir, { recursive: true });
+  await mkdir(worktreeRoot, { recursive: true });
+  await writeFile(join(worktreeRoot, '.git'), `gitdir: ${adminDir}\n`, 'utf8');
+  await writeFile(join(adminDir, 'commondir'), '../..\n', 'utf8');
+
+  await mkdir(join(E2E_LOG_DIR, E2E_WT_MAIN_PROJECT_ID), { recursive: true });
+  await mkdir(join(E2E_LOG_DIR, E2E_WT_PROJECT_ID), { recursive: true });
+  await writeFile(
+    join(E2E_LOG_DIR, E2E_WT_MAIN_PROJECT_ID, `${SESSION_WT_MAIN}.jsonl`),
+    toJsonl([
+      userLine({
+        uuid: 'u-e4-1',
+        parentUuid: null,
+        timestamp: iso(120),
+        sessionId: SESSION_WT_MAIN,
+        cwd: E2E_WT_REPO_ROOT,
+        content: '本体リポジトリでの依頼文。',
+      }),
+      assistantLine({
+        uuid: 'a-e4-1',
+        parentUuid: 'u-e4-1',
+        timestamp: iso(119),
+        sessionId: SESSION_WT_MAIN,
+        cwd: E2E_WT_REPO_ROOT,
+        content: [{ type: 'text', text: '本体リポジトリでの応答。' }],
+      }),
+    ]),
+    'utf8',
+  );
+  await writeFile(
+    join(E2E_LOG_DIR, E2E_WT_PROJECT_ID, `${SESSION_WT}.jsonl`),
+    toJsonl([
+      userLine({
+        uuid: 'u-e5-1',
+        parentUuid: null,
+        timestamp: iso(60),
+        sessionId: SESSION_WT,
+        cwd: worktreeRoot,
+        content: 'worktree での依頼文。',
+      }),
+      assistantLine({
+        uuid: 'a-e5-1',
+        parentUuid: 'u-e5-1',
+        timestamp: iso(59),
+        sessionId: SESSION_WT,
+        cwd: worktreeRoot,
+        content: [{ type: 'text', text: 'worktree での応答。' }],
+      }),
+    ]),
+    'utf8',
+  );
+}
+
 /** 合成 ~/.claude 相当（設定・定義画面用）。 */
 async function seedClaudeDir(): Promise<void> {
   await mkdir(join(E2E_CLAUDE_DIR, 'agents'), { recursive: true });
@@ -309,5 +379,6 @@ export async function seed(): Promise<void> {
   await mkdir(dirname(codexPath), { recursive: true });
   await writeFile(codexPath, toJsonl(codexSessionLines()), 'utf8');
 
+  await seedWorktree();
   await seedClaudeDir();
 }

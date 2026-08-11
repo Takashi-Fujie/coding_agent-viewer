@@ -34,6 +34,8 @@ function sessionListItem(
   return {
     id: session.id,
     source: session.sourceId,
+    // worktree 併合されたセッションのラベル（SPEC-DASH-100）。本体・非統合は null
+    worktree: session.worktree,
     records: filteredCount,
     title: summary.title ?? null,
     firstTimestamp: summary.firstTimestamp ?? null,

@@ -183,6 +183,12 @@ tr.rowlink {
 tr.rowlink:hover td {
   background: var(--wash);
 }
+/* worktree グループ見出し行（SPEC-DASH-101） */
+tr.wtgroup td {
+  background: var(--wash);
+  font-size: 11.5px;
+  padding-top: 10px;
+}
 
 .pmeta {
   color: var(--muted);

@@ -27,8 +27,13 @@ export interface ProjectListItem {
   lastTimestamp: string | null;
 }
 
-/** プロジェクトの表示用実パス。最終更新が新しいセッションの cwd を採用する。 */
+/**
+ * プロジェクトの表示用実パス。worktree 併合済みなら本体ルート（SPEC-CORE-088。
+ * worktree セッションが最新でも表示を worktree 側へ揺らさない）、
+ * それ以外は最終更新が新しいセッションの cwd を採用する。
+ */
 export function projectPath(project: ProjectEntry): string | null {
+  if (project.rootPath !== undefined) return project.rootPath;
   let path: string | null = null;
   let latest = '';
   for (const session of project.sessions) {
