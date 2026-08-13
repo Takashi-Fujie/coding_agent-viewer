@@ -334,3 +334,28 @@ Skill 履歴（最終使用日時付き）を描画できることをレンダ�
 - ソース切替の部分表示: codex 選択で統合行が sources=['codex']・2 セッションになり（16 行）、
   claude 選択で 30 セッション（8 行）。`codex:` 付き旧 URL は 404・統合 id の URL は 200
 - verify 全 pass（unit 341 / E2E 29）・report 照合 OK・spec:check 乖離なし（claude 集計は前後不変）
+
+---
+
+# セッション一覧の compaction 回数列（Issue #52）
+
+基本仕様は [docs/spec/DASH.md](../spec/DASH.md) の同名セクション。セッション分析画面側（マーカー・区切り線）は [docs/design/CHAT.md](CHAT.md)。
+
+## データモデル・実装方針
+
+- `SessionSummary` に `compactionCount: number` を追加する。`server/core/summary.ts` の `addToSummary` で `kind === 'system' && subtype === 'compact_boundary'` のレコードを数える（順序非依存の加算のみ → 増分更新で全再構築と一致する既存性質 SPEC-CORE-046 に乗る）
+- 集計はソース中立（Codex 正規化は compact_boundary を生成しないため常に 0）。**Codex の「—」表示はサーバではなく画面側で `source !== 'claude'` により行う**（0 と集計不能の区別は表示の関心事。DTO に Codex 分岐を持ち込まない）
+- **キャッシュ互換**: summary はキャッシュに保存されるため、旧キャッシュは compactionCount を持たない。増分更新では過去分を数え直せないため `INDEX_SCHEMA_VERSION` を **6** に繰り上げて全再構築させる
+- API: `GET /api/projects/:id` の sessions 要素（`SessionListItem`）に `compactionCount: number` を追加する（エンドポイント追加ではないため apiDrift 対象外）。範囲フィルタの影響を受けない要約値（recordCount 等と同じ扱い）
+- 画面: `SessionListView` のテーブルに「compaction」列を「コスト推定」の次に追加する。claude ソースは 0 を含む数値、それ以外のソースは「—」。worktree グループ見出し・空メッセージの colSpan を 6 → 7 に更新する
+
+## 受け入れ基準
+
+- [x] `SPEC-DASH-120` SessionSummary の compactionCount は compact_boundary レコード数を数え、無いセッションでは 0 になる
+- [x] `SPEC-DASH-121` INDEX_SCHEMA_VERSION の繰り上げ（6）により compactionCount の無い旧キャッシュは全再構築される
+- [x] `SPEC-DASH-122` GET /api/projects/:id の sessions 要素に compactionCount が含まれる
+- [x] `SPEC-DASH-123` セッション一覧の「コスト推定」の次に compaction 列が表示され、claude セッションは 0 を含む回数、claude 以外のソースは「—」になる
+
+### E2E（tests/e2e）
+
+- [x] `SPEC-DASH-124` compact_boundary を含む seed でセッション一覧に回数が表示され、セッション分析画面の ⚡ マーカー・通し番号付き区切り線の本数と一致する

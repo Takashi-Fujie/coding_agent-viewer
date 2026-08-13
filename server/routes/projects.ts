@@ -44,6 +44,7 @@ function sessionListItem(
     skippedLineCount: summary.skippedLineCount,
     totalTokens,
     estimatedCost: estimateRecordsCost(records, table).total,
+    compactionCount: summary.compactionCount,
     models: Object.keys(summary.models).sort(),
   };
 }

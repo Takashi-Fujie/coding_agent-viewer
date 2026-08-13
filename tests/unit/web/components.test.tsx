@@ -27,6 +27,7 @@ function summary(over: Partial<SessionSummary> = {}): SessionSummary {
     userCount: 3,
     sidechainCount: 2,
     syntheticCount: 0,
+    compactionCount: 0,
     models: {
       'claude-opus-5': {
         messages: 4,
@@ -193,6 +194,20 @@ describe('DividerLine', () => {
     );
     expect(screen.getByText(/ターン完了 · 42 秒/)).toBeTruthy();
   });
+
+  it('SPEC-CHAT-082: compact 区切り行の通し番号を「compaction #N」として表示する', () => {
+    render(
+      <DividerLine
+        row={{
+          type: 'compact',
+          startIndex: 4,
+          seq: 2,
+          record: { index: 4, offset: 0, length: 1, type: 'system', kind: 'system' } as MessageMeta,
+        }}
+      />,
+    );
+    expect(screen.getByText(/compaction #2/)).toBeTruthy();
+  });
 });
 
 describe('SidechainGroup', () => {
@@ -242,6 +257,18 @@ describe('TurnCostChart', () => {
     onSelect.mockClear();
     fireEvent.click(screen.getByTestId('turn-band-0'));
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('SPEC-CHAT-081: markers の位置ごとに ⚡ マーカーを描画し、本数が一致する', () => {
+    render(
+      <TurnCostChart exchanges={exchanges} selected={null} onSelect={() => {}} markers={[1, 2]} />,
+    );
+    expect(screen.getAllByTestId('compaction-marker')).toHaveLength(2);
+  });
+
+  it('SPEC-CHAT-081: markers が空のときはマーカーを描画しない', () => {
+    render(<TurnCostChart exchanges={exchanges} selected={null} onSelect={() => {}} markers={[]} />);
+    expect(screen.queryByTestId('compaction-marker')).toBeNull();
   });
 });
 

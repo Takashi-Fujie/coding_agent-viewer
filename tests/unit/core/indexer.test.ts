@@ -81,6 +81,11 @@ describe('decideStrategy', () => {
     expect(decideStrategy(cache, { size: 1000, mtimeMs: 1_700_000_000_000 })).toBe('rebuild');
   });
 
+  it('SPEC-DASH-121: INDEX_SCHEMA_VERSION の繰り上げ（6）により compactionCount の無い旧キャッシュは全再構築される', () => {
+    // v5 の summary には compactionCount が無く、増分更新では過去分を数え直せないため
+    expect(INDEX_SCHEMA_VERSION).toBeGreaterThanOrEqual(6);
+  });
+
   it('SPEC-CORE-045: キャッシュが無ければ全再構築する', () => {
     expect(decideStrategy(null, { size: 1000, mtimeMs: 1_700_000_000_000 })).toBe('rebuild');
   });

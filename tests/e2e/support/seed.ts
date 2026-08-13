@@ -22,6 +22,7 @@ import {
   E2E_WT_REPO_ROOT,
   LONG_TURNS,
   SEARCH_TOKEN,
+  SESSION_COMPACT,
   SESSION_LIVE,
   SESSION_LONG,
   SESSION_MAIN,
@@ -151,6 +152,50 @@ function mainSessionLines(): Record<string, unknown>[] {
       sessionId: sid,
       model: 'claude-imaginary-9',
       content: [{ type: 'text', text: '価格表に無い合成モデルの応答。' }],
+    }),
+  ];
+}
+
+/** compaction 表示テスト用のセッション（Issue #52・SPEC-DASH-124）。境界 1 件・前後 1 やりとりずつ。 */
+function compactSessionLines(): Record<string, unknown>[] {
+  const sid = SESSION_COMPACT;
+  return [
+    userLine({
+      uuid: 'u-e6-1',
+      parentUuid: null,
+      timestamp: iso(ONE_DAY),
+      sessionId: sid,
+      content: '圧縮前のやりとり。',
+    }),
+    assistantLine({
+      uuid: 'a-e6-1',
+      parentUuid: 'u-e6-1',
+      timestamp: iso(ONE_DAY - 1),
+      sessionId: sid,
+      content: [{ type: 'text', text: '圧縮前の応答。' }],
+    }),
+    {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'sys-e6-1',
+      parentUuid: 'a-e6-1',
+      isSidechain: false,
+      timestamp: iso(ONE_DAY - 2),
+      sessionId: sid,
+    },
+    userLine({
+      uuid: 'u-e6-2',
+      parentUuid: 'sys-e6-1',
+      timestamp: iso(ONE_DAY - 3),
+      sessionId: sid,
+      content: '圧縮後のやりとり。',
+    }),
+    assistantLine({
+      uuid: 'a-e6-2',
+      parentUuid: 'u-e6-2',
+      timestamp: iso(ONE_DAY - 4),
+      sessionId: sid,
+      content: [{ type: 'text', text: '圧縮後の応答。' }],
     }),
   ];
 }
@@ -400,6 +445,7 @@ export async function seed(): Promise<void> {
   await writeFile(sessionFilePath(SESSION_MAIN), toJsonl(mainSessionLines()), 'utf8');
   await writeFile(sessionFilePath(SESSION_LIVE), toJsonl(liveSessionLines()), 'utf8');
   await writeFile(sessionFilePath(SESSION_LONG), toJsonl(longSessionLines()), 'utf8');
+  await writeFile(sessionFilePath(SESSION_COMPACT), toJsonl(compactSessionLines()), 'utf8');
 
   const codexPath = codexFilePath();
   await mkdir(dirname(codexPath), { recursive: true });

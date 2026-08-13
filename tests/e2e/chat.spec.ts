@@ -6,6 +6,7 @@ import {
   E2E_PROJECT_ID,
   E2E_PROJECT_PATH,
   LONG_TURNS,
+  SESSION_COMPACT,
   SESSION_LONG,
   SESSION_MAIN,
   SESSION_SAMPLE,
@@ -95,4 +96,21 @@ test('SPEC-CHAT-075: 画面に収まらない行数のセッションで、.appm
     });
     await expect(last).toBeVisible({ timeout: 500 });
   }).toPass({ timeout: 10_000 });
+});
+
+test('SPEC-DASH-124: セッション一覧の回数と、分析画面の ⚡ マーカー・通し番号付き区切り線が一致する', async ({
+  page,
+}) => {
+  // プロジェクト画面: compaction 列に回数が出る（claude セッションは 0 も表示）
+  await page.goto(`/#/projects/${E2E_PROJECT_ID}`);
+  const table = page.getByTestId('session-table');
+  const compactRow = table.locator('tr', { hasText: SESSION_COMPACT });
+  await expect(compactRow.getByTestId('compaction-count')).toHaveText('1');
+  const mainRow = table.locator('tr', { hasText: SESSION_MAIN });
+  await expect(mainRow.getByTestId('compaction-count')).toHaveText('0');
+
+  // セッション分析画面: マーカー 1 本・通し番号付き区切り線 1 本
+  await page.goto(sessionUrl(SESSION_COMPACT));
+  await expect(page.getByTestId('compaction-marker')).toHaveCount(1);
+  await expect(page.locator('.divider.compaction')).toContainText('compaction #1');
 });

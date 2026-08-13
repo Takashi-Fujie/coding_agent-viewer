@@ -433,3 +433,24 @@ model が undefined の usage レコードは、summary では `(unknown)` キ�
 - 旧日付グループの URL（`/api/projects/2026-08-10` 等）は 404
 - Claude 側の一覧・集計は変更前後で不変（verify 全 pass・report 照合 OK・spec:check 乖離なし）
 - 既知の制約: cwd の `-` 縮約は非可逆のため、非 ASCII 名のディレクトリ同士は理論上 id が衝突しうる（claude の既存 id 規約から継承した性質。ラベル・パス表示は cwd 原文を使うため影響しない）
+
+---
+
+# compaction イベントの再調査（Issue #52・2026-08-13）
+
+セッション分析画面の compaction 回数表示（SPEC-CHAT / SPEC-DASH の Issue #52 セクション）に先立ち、#17 で「未観測・仮説」とした compaction の痕跡を現行の実ログ全量で再調査した。
+
+## 観測条件と結果
+
+| 項目 | 値 |
+|---|---|
+| 観測日 | 2026-08-13 |
+| 対象 | 25 ファイル（~/.codex/sessions 全量） |
+| compaction 相当の top-level type / payload.type | **0 件**（「compact」の文字列一致はすべて本文テキスト: base_instructions の説明文・ツール出力・会話本文のみ） |
+| token_count 累積（total_tokens）の減少 | **0 / 804 行**（全ファイルで単調増加のまま。#17 の 612 検査から範囲を拡大して再確認） |
+
+## 結論（#52 での扱い）
+
+- compaction の発生を rollout から検出する手段が無いため、**Codex セッションには compaction 表示を出さない**。セッション一覧の回数列は「—」（0 との区別。SPEC-DASH-123）
+- 間接指標（累積減少 = epoch 切替・SPEC-CODEX-087）を発生回数の代用にしない。減少自体が未観測であり、「未観測・仮説は使う前に再検証」の規約に反するため
+- 将来 Codex 側に compaction イベントが現れた場合は、正規化で `subtype: 'compact_boundary'` の system レコードへ写像すれば、集計・画面side は無変更で追随する（判定述語がソース中立のため）

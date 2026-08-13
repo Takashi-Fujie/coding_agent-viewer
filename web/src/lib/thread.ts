@@ -19,6 +19,8 @@ export interface DividerRow {
   type: 'compact' | 'turn';
   startIndex: number;
   record: MessageMeta;
+  /** compact 区切りの 1 始まり通し番号（SPEC-CHAT-082）。turn には付かない。 */
+  seq?: number;
 }
 
 export interface SidechainRow {
@@ -54,6 +56,8 @@ export function createRowBuilder(): RowBuilder {
   /** tool_use_id → その tool_use を発行した assistant 行の rows 内位置。 */
   const ownerByToolUseId = new Map<string, number>();
   let count = 0;
+  /** compact 区切りの通し番号。増分 append をまたいで継続する（SPEC-CHAT-083）。 */
+  let compactSeq = 0;
 
   function append(records: MessageMeta[]): void {
     count += records.length;
@@ -75,7 +79,8 @@ export function createRowBuilder(): RowBuilder {
 
       if (record.kind === 'system') {
         if (record.subtype === 'compact_boundary') {
-          rows.push({ type: 'compact', startIndex: record.index, record });
+          compactSeq += 1;
+          rows.push({ type: 'compact', startIndex: record.index, record, seq: compactSeq });
         } else if (record.durationMs !== undefined) {
           rows.push({ type: 'turn', startIndex: record.index, record });
         }

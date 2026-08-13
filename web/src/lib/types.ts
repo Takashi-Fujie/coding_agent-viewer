@@ -92,6 +92,8 @@ export interface SessionListItem {
   skippedLineCount: number;
   totalTokens: number;
   estimatedCost: number;
+  /** compaction（compact_boundary）発生回数（SPEC-DASH-122）。 */
+  compactionCount: number;
   models: string[];
 }
 

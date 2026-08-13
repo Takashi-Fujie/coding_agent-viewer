@@ -2,7 +2,7 @@
  * やりとり（exchange）分割とコスト合算（SPEC-CHAT-042/043/045）。仕様は docs/design/CHAT.md。
  */
 import { describe, expect, it } from 'vitest';
-import { buildExchanges } from '../../../web/src/lib/exchanges';
+import { buildExchanges, compactionMarkers } from '../../../web/src/lib/exchanges';
 import type { MessageMeta } from '../../../web/src/lib/types';
 
 function meta(index: number, over: Partial<MessageMeta>): MessageMeta {
@@ -65,5 +65,22 @@ describe('buildExchanges', () => {
     expect(exchanges.map((e) => e.compacted)).toEqual([true, false]);
     // compacted でもコスト合計には含まれる（整合を崩さない）
     expect(exchanges.reduce((a, e) => a + e.total, 0)).toBeCloseTo(0.03, 10);
+  });
+
+  it('SPEC-CHAT-080: compactionMarkers は境界より前に開始したやりとり数を位置として返し、境界が無ければ空になる', () => {
+    const records = [
+      meta(0, { kind: 'user' }),
+      meta(1, { kind: 'assistant', cost: cost(0.01) }),
+      meta(2, { kind: 'system', subtype: 'compact_boundary' }),
+      meta(3, { kind: 'user' }),
+      meta(4, { kind: 'system', subtype: 'compact_boundary' }),
+    ];
+    const exchanges = buildExchanges(records);
+
+    // 境界 index 2 の前に開始したやりとりは 1 件、境界 index 4 の前は 2 件
+    expect(compactionMarkers(records, exchanges)).toEqual([1, 2]);
+
+    const plain = [meta(0, { kind: 'user' }), meta(1, { kind: 'assistant', cost: cost(0.01) })];
+    expect(compactionMarkers(plain, buildExchanges(plain))).toEqual([]);
   });
 });

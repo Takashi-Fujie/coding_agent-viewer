@@ -186,3 +186,61 @@ describe('SessionListView（worktree グルーピング）', () => {
     expect(screen.queryByText('本体の作業')).toBeNull();
   });
 });
+
+describe('SessionListView（compaction 回数列・Issue #52）', () => {
+  const COMPACTION_PROJECT = {
+    id: '-home-dev-project-a',
+    sources: ['claude', 'codex'],
+    path: '/home/dev/project-a',
+    range: { from: null, to: null },
+    bySource: [
+      { source: 'claude', sessions: 2, records: 20, totalTokens: 2000, estimatedCost: 0.2 },
+      { source: 'codex', sessions: 1, records: 10, totalTokens: 1000, estimatedCost: 0.1 },
+    ],
+    daily: [{ date: '2026-08-05', byModel: { 'claude-opus-5': 4000 }, cost: 0.9 }],
+    sessions: [
+      { ...sessionRowBase('s-c1', 'compaction ありの作業'), compactionCount: 2 },
+      { ...sessionRowBase('s-c2', 'compaction なしの作業'), compactionCount: 0 },
+      { ...sessionRowBase('cx-1', 'Codex の作業'), source: 'codex', compactionCount: 0 },
+    ],
+  };
+
+  function sessionRowBase(id: string, title: string) {
+    return {
+      id,
+      source: 'claude',
+      worktree: null,
+      records: 10,
+      title,
+      firstTimestamp: '2026-08-05T00:00:00.000Z',
+      lastTimestamp: '2026-08-06T10:00:00.000Z',
+      recordCount: 10,
+      skippedLineCount: 0,
+      totalTokens: 1000,
+      estimatedCost: 0.1,
+      models: ['claude-opus-5'],
+    };
+  }
+
+  it('SPEC-DASH-123: コスト推定の次に compaction 列があり、claude は 0 を含む回数・claude 以外は「—」を表示する', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(COMPACTION_PROJECT), { status: 200 })),
+    );
+    render(<SessionListView projectId="-home-dev-project-a" />);
+    await screen.findByText('compaction ありの作業');
+
+    const table = screen.getByTestId('session-table');
+
+    // 列順: コスト推定の次に compaction（最終更新の手前）
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((th) => th.textContent ?? '');
+    expect(headers.indexOf('compaction')).toBe(headers.indexOf('コスト推定') + 1);
+
+    const rowOf = (title: string) => within(table).getByText(title).closest('tr')!;
+    expect(within(rowOf('compaction ありの作業')).getByTestId('compaction-count').textContent).toBe('2');
+    expect(within(rowOf('compaction なしの作業')).getByTestId('compaction-count').textContent).toBe('0');
+    expect(within(rowOf('Codex の作業')).getByTestId('compaction-count').textContent).toBe('—');
+  });
+});

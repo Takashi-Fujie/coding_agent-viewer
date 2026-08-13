@@ -120,6 +120,20 @@ describe('createSummary / addToSummary', () => {
     expect(aiOnly.title).toBe('AI 生成');
   });
 
+  it('SPEC-DASH-120: compact_boundary レコードを compactionCount として数え、無いセッションでは 0 になる', () => {
+    const counted = summarize([
+      assistantLine({ uuid: 'a1' }),
+      { type: 'system', subtype: 'compact_boundary', uuid: 'sys1' },
+      // 他の system（turn_duration 等）は数えない
+      { type: 'system', subtype: 'turn_duration', durationMs: 1000, uuid: 'sys2' },
+      { type: 'system', subtype: 'compact_boundary', uuid: 'sys3' },
+    ]);
+    expect(counted.compactionCount).toBe(2);
+
+    const none = summarize([assistantLine({ uuid: 'a1' })]);
+    expect(none.compactionCount).toBe(0);
+  });
+
   it('SPEC-CORE-014: synthetic メッセージを件数として区別できる', async () => {
     const result = await scanFile(SAMPLE_FIXTURE);
     const summary = createSummary();
