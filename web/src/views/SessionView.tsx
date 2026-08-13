@@ -9,7 +9,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from '../api';
 import { createBodyStore } from '../lib/bodystore';
-import { buildExchanges } from '../lib/exchanges';
+import { buildExchanges, compactionMarkers } from '../lib/exchanges';
 import { formatUsd } from '../lib/format';
 import { advanceRowBuilder, applyAppend, openLive } from '../lib/live';
 import type { LiveStatus } from '../lib/live';
@@ -103,6 +103,11 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
   }, [sessionId, reloadKey]);
 
   const exchanges = useMemo(() => (detail ? buildExchanges(detail.messages) : []), [detail]);
+  // compaction 発生位置（SPEC-CHAT-081）。ライブ追記でも detail.messages から再計算される
+  const markers = useMemo(
+    () => (detail ? compactionMarkers(detail.messages, exchanges) : []),
+    [detail, exchanges],
+  );
   const visibleRows = useMemo(() => {
     if (selected === null) return rows;
     const exchange = exchanges.find((e) => e.index === selected);
@@ -166,7 +171,7 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
               </span>
             )}
           </h2>
-          <TurnCostChart exchanges={exchanges} selected={selected} onSelect={setSelected} />
+          <TurnCostChart exchanges={exchanges} selected={selected} onSelect={setSelected} markers={markers} />
           {exchanges.some((e) => e.compacted) && (
             <div className="note">グレーの棒は compact で要約済みのやりとり（クリック不可）</div>
           )}

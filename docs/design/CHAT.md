@@ -149,3 +149,22 @@ web/
 親セッションの分岐としての紐付け表示（SPEC-CHAT-030/031 の分岐 UI が新形式でも
 発火する形）にはインデクサ側（SPEC-CORE）での対応付けが必要。#6 では旧形式
 （同一ファイル内 sidechain）のみ分岐表示の対象とする。
+
+---
+
+# compaction 発生の可視化（Issue #52）
+
+基本仕様は [docs/spec/CHAT.md](../spec/CHAT.md)。セッション一覧の回数列（summary 集計・API・列表示）は [docs/design/DASH.md](DASH.md) の同名セクション。Codex 側の調査記録（未観測 → 非表示）は [docs/design/CODEX.md](CODEX.md)。
+
+## 実装方針
+
+- 判定は既存の compact 区切り表示と同一の述語 `kind === 'system' && subtype === 'compact_boundary'` を使う（`web/src/lib/thread.ts` と同じ）。Codex 正規化はこの subtype を生成しないため、ソース分岐なしで Codex には何も表示されない
+- **棒グラフのマーカー**: `web/src/lib/exchanges.ts` に純関数 `compactionMarkers(records, exchanges): number[]` を追加する。各 compact_boundary について「境界より前に開始したやりとりの数」を返す（= マーカーはそのやりとり位置の直前の帯境界に立つ）。`TurnCostChart` は各位置の帯境界 x に ⚡ テキストと縦破線を描画する（手書き SVG・チャートライブラリなしの方針を維持）
+- **区切り線の通し番号**: `thread.ts` の `DividerRow`（type 'compact'）に `seq`（1 始まり）を追加する。`RowBuilder` が compact 行の生成数を内部カウンタで保持し、ライブ追記（増分 append）でも通し番号が続く。`DividerLine` は「⚡ compaction #N — 以前の会話を要約」を強調スタイル（CSS クラス追加)で表示する
+
+## 受け入れ基準
+
+- [x] `SPEC-CHAT-080` compactionMarkers は compact_boundary ごとに「境界より前に開始したやりとり数」を位置として返し、境界の無いレコード列では空配列を返す
+- [x] `SPEC-CHAT-081` TurnCostChart はマーカー位置ごとに ⚡ マーカーを描画し、マーカー数はセッション内の compact_boundary 数と一致する。マーカーは tooltip（CSS :hover の自前吹き出し・0.3 秒遅延・影付き）で「compaction #N 発生」を説明する
+- [x] `SPEC-CHAT-082` compact 区切り行には 1 始まりの通し番号 seq が付き、DividerLine は「compaction #N」を表示する
+- [x] `SPEC-CHAT-083` RowBuilder の増分 append をまたいでも compact 区切りの通し番号が連番で継続する

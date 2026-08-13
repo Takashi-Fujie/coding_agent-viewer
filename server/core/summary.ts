@@ -27,6 +27,7 @@ export function createSummary(): SessionSummary {
     userCount: 0,
     sidechainCount: 0,
     syntheticCount: 0,
+    compactionCount: 0,
     models: {},
     toolUseCounts: {},
     subagentTypes: {},
@@ -102,6 +103,12 @@ export function addToSummary(summary: SessionSummary, record: IndexRecord): void
 
     case 'user':
       summary.userCount += 1;
+      break;
+
+    case 'system':
+      // 会話の compact 区切りと同じ判定（SPEC-DASH-120）。Codex 正規化はこの
+      // subtype を生成しないため、Codex セッションでは常に 0 のまま
+      if (record.subtype === 'compact_boundary') summary.compactionCount += 1;
       break;
 
     case 'title':

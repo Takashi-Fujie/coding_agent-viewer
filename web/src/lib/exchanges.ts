@@ -58,3 +58,18 @@ export function buildExchanges(records: MessageMeta[]): Exchange[] {
 
   return exchanges;
 }
+
+/**
+ * compaction マーカーの位置（SPEC-CHAT-080）。各 compact_boundary について
+ * 「境界より前に開始したやりとりの数」を返す。棒グラフはこの位置の帯境界に
+ * マーカーを立てる（= その位置のやりとりの直前で圧縮が起きた）。
+ */
+export function compactionMarkers(records: MessageMeta[], exchanges: Exchange[]): number[] {
+  const markers: number[] = [];
+  for (const record of records) {
+    if (record.kind === 'system' && record.subtype === 'compact_boundary') {
+      markers.push(exchanges.filter((e) => e.startIndex < record.index).length);
+    }
+  }
+  return markers;
+}

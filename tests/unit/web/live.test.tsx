@@ -78,6 +78,7 @@ function makeSummary(over: Partial<SessionSummary> = {}): SessionSummary {
     userCount: 1,
     sidechainCount: 0,
     syntheticCount: 0,
+    compactionCount: 0,
     models: {
       'claude-sonnet-5': {
         messages: 1,

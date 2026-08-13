@@ -178,4 +178,22 @@ describe('createRowBuilder', () => {
     expect(builder.rows()).toEqual(buildRows(records));
     expect(builder.count).toBe(records.length);
   });
+
+  it('SPEC-CHAT-083: 増分 append をまたいでも compact 区切りの通し番号が連番で継続する', () => {
+    const builder = createRowBuilder();
+    builder.append([
+      meta({ index: 0, kind: 'user', uuid: 'u1' }),
+      meta({ index: 1, kind: 'system', subtype: 'compact_boundary' }),
+    ]);
+    builder.append([
+      meta({ index: 2, kind: 'user', uuid: 'u2' }),
+      meta({ index: 3, kind: 'system', subtype: 'compact_boundary' }),
+    ]);
+
+    const seqs = builder
+      .rows()
+      .filter((row) => row.type === 'compact')
+      .map((row) => (row.type === 'compact' ? row.seq : undefined));
+    expect(seqs).toEqual([1, 2]);
+  });
 });

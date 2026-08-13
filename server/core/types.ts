@@ -17,8 +17,10 @@
  *    キャッシュから増分再開したとき、Codex の model 関連付けが静かに失われる。
  * 5: scanState に token_count の会計基準 prevUsage を追加（SPEC-CODEX-089/090）。上げないと
  *    基準の無い旧キャッシュから増分再開したとき、累積値を全額計上する多重計上になる。
+ * 6: summary に compactionCount を追加（SPEC-DASH-120/121）。上げないと旧キャッシュの
+ *    セッションが増分更新では過去の compaction を数え直せず 0 のまま固定される。
  */
-export const INDEX_SCHEMA_VERSION = 5;
+export const INDEX_SCHEMA_VERSION = 6;
 
 /** 走査で得られる生の 1 行。offset / length はバイト単位で、改行は length に含めない。 */
 export interface RawLine {
@@ -165,6 +167,8 @@ export interface SessionSummary {
   userCount: number;
   sidechainCount: number;
   syntheticCount: number;
+  /** compact_boundary（compaction 境界）レコードの数（SPEC-DASH-120）。 */
+  compactionCount: number;
   models: Record<string, ModelTotals>;
   toolUseCounts: Record<string, number>;
   subagentTypes: Record<string, number>;

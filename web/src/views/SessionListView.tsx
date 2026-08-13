@@ -50,6 +50,10 @@ function sessionRow(s: SessionListItem, projectId: string) {
           formatUsd(s.estimatedCost)
         )}
       </td>
+      {/* compaction 回数（SPEC-DASH-123）。claude 以外は検出手段が無いため「—」 */}
+      <td className="num" data-testid="compaction-count">
+        {s.source !== 'claude' ? '—' : s.compactionCount}
+      </td>
       <td>{formatWhen(s.lastTimestamp)}</td>
     </tr>
   );
@@ -229,6 +233,7 @@ export function SessionListView({ projectId }: { projectId: string }) {
                   <th className="num">msg</th>
                   <th className="num">トークン</th>
                   <th className="num">コスト推定</th>
+                  <th className="num">compaction</th>
                   <th>最終更新</th>
                 </tr>
               </thead>
@@ -239,7 +244,7 @@ export function SessionListView({ projectId }: { projectId: string }) {
                       <Fragment key={g.label}>
                         {/* worktree グループ見出し（SPEC-DASH-101） */}
                         <tr data-testid="wt-group" className="wtgroup">
-                          <td colSpan={6}>
+                          <td colSpan={7}>
                             <b>{g.label}</b>
                             <span className="est">（{g.sessions.length} セッション）</span>
                           </td>
@@ -249,7 +254,7 @@ export function SessionListView({ projectId }: { projectId: string }) {
                     ))}
                 {selectedDay !== null && daySessions !== undefined && sessions.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="note">
+                    <td colSpan={7} className="note">
                       この日に活動したセッションはありません
                     </td>
                   </tr>

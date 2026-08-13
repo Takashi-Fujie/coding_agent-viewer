@@ -88,6 +88,16 @@ function sessionD2Lines(): unknown[] {
         content: [{ type: 'tool_result', tool_use_id: 'toolu_d2_mcp', content: 'PR created' }],
       },
     },
+    // compaction 境界（SPEC-DASH-122 の集計対象）
+    {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'sys-d2-1',
+      parentUuid: 'u-d2-3',
+      isSidechain: false,
+      timestamp: '2026-01-01T20:00:20.000Z',
+      sessionId: SESSION_D2,
+    },
   ];
 }
 
@@ -215,6 +225,18 @@ describe('ローカル日付集計（API）', () => {
     expect(daily.length).toBeGreaterThan(0);
     const sum = daily.reduce((s, d) => s + d.cost, 0);
     expect(sum).toBeCloseTo(expected, 10);
+  });
+
+  it('SPEC-DASH-122: /api/projects/:id の sessions 要素は compactionCount を含む', async () => {
+    const res = await request(app).get(`/api/projects/${PROJECT_A}`);
+    expect(res.status).toBe(200);
+    const sessions: { id: string; compactionCount: number }[] = res.body.sessions;
+
+    const d2 = sessions.find((s) => s.id === SESSION_D2);
+    expect(d2?.compactionCount).toBe(1);
+    // 境界の無いセッションは 0（undefined ではなく数値で返す）
+    const d1 = sessions.find((s) => s.id === SESSION_D1);
+    expect(d1?.compactionCount).toBe(0);
   });
 });
 
