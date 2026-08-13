@@ -26,6 +26,7 @@ if (invokedDirectly) {
   const app = createApp({
     logDir: join(claudeDir, 'projects'),
     cacheDir: '.cache',
+    localDir: 'local',
     claudeDir,
     codexSessionsDir: join(homedir(), '.codex', 'sessions'),
   });

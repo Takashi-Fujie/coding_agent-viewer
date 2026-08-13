@@ -8,7 +8,9 @@
  * SPEC-CORE の decideStrategy に委ねるため、ここでは TTL を持たない
  * （変更が無ければ stat のコストだけで最新のインデックスが得られる）。
  */
+import { stat } from 'node:fs/promises';
 import { buildIndex } from './core/indexer.js';
+import { loadAliases, loadLedger, saveLedger } from './core/rename.js';
 import { resolveRepo } from './core/worktree.js';
 import type { RepoResolution } from './core/worktree.js';
 import type { SessionIndex } from './core/types.js';
@@ -53,6 +55,11 @@ export interface Snapshot {
 export interface StoreOptions {
   sources: LogSource[];
   cacheDir: string;
+  /**
+   * リネーム追跡の台帳・エイリアスの置き場（SPEC-CORE-100〜109。本番はリポジトリ直下
+   * `local/`・gitignore 済み）。省略時はリネーム追跡を行わない（既存テストの互換維持）。
+   */
+  localDir?: string | undefined;
 }
 
 /**
@@ -87,7 +94,13 @@ export async function loadSnapshot(options: StoreOptions): Promise<Snapshot> {
     }
   }
 
-  return { projects: await consolidateWorktrees(regroupCodexByCwd(projects)), sessionsById, sourcesById };
+  // resolveRepo のメモを rename 追跡と worktree 併合で共有する（同じ cwd を二重解決しない）
+  const memo = new Map<string, RepoResolution | null>();
+  let grouped = regroupCodexByCwd(projects);
+  if (options.localDir !== undefined) {
+    grouped = await consolidateRenames(grouped, options.localDir, memo);
+  }
+  return { projects: await consolidateWorktrees(grouped, memo), sessionsById, sourcesById };
 }
 
 /** パス由来のグループ id: cwd の非英数字 `-` 置換（SPEC-CORE-091）。
@@ -163,6 +176,123 @@ function representativeCwd(project: ProjectEntry): string | null {
   return cwd;
 }
 
+/**
+ * プロジェクトディレクトリのリネーム追跡（SPEC-CORE-100〜109・docs/design/CORE.md）。
+ *
+ * worktree 併合の**前**に置く。本体リポジトリごとリネームされると旧 worktree グループの
+ * cwd も消失して `.git` を辿れず worktree 併合では救済できないため、台帳には併合前の
+ * グループ id ごとに**解決済み本体ルート**の識別子 (dev, ino) を記録しておき、消失した
+ * グループを同じ識別子を持つ現存グループの id へ改名・併合する。
+ *
+ * 旧ログディレクトリはリネーム後も残り続けて毎回再発見されるため、この変換は
+ * 一度きりの移行ではなく毎スナップショットで冪等に適用される（台帳エントリは削除しない）。
+ */
+async function consolidateRenames(
+  projects: ProjectEntry[],
+  localDir: string,
+  memo: Map<string, RepoResolution | null>,
+): Promise<ProjectEntry[]> {
+  const resolve = async (cwd: string): Promise<RepoResolution | null> => {
+    let resolution = memo.get(cwd);
+    if (resolution === undefined) {
+      resolution = await resolveRepo(cwd);
+      memo.set(cwd, resolution);
+    }
+    return resolution;
+  };
+  const [ledger, aliases] = await Promise.all([loadLedger(localDir), loadAliases(localDir)]);
+
+  // 識別パス（解決済み本体ルート優先）を stat し、現存グループの識別子逆引きと
+  // 消失グループの検出、台帳の更新を行う
+  const vanished = new Set<ProjectEntry>();
+  const liveByKey = new Map<string, { project: ProjectEntry; isMain: boolean }>();
+  let ledgerChanged = false;
+  for (const project of projects) {
+    const cwd = representativeCwd(project);
+    if (cwd === null) continue; // 代表パスを持たないグループは対象外（SPEC-CORE-107）
+    const resolution = await resolve(cwd);
+    const idPath = resolution?.root ?? cwd;
+    let info;
+    try {
+      info = await stat(idPath);
+    } catch {
+      vanished.add(project);
+      continue;
+    }
+    const entry = ledger.entries[project.id];
+    if (
+      entry === undefined ||
+      entry.dev !== info.dev ||
+      entry.ino !== info.ino ||
+      entry.cwd !== idPath
+    ) {
+      ledger.entries[project.id] = {
+        dev: info.dev,
+        ino: info.ino,
+        cwd: idPath,
+        recordedAt: new Date().toISOString(),
+      };
+      ledgerChanged = true;
+    }
+    // 改名先には本体（worktree でないグループ）を優先する。worktree グループも同じ本体
+    // ルートの識別子を持つため、先勝ちだと改名先が worktree の id になり得る
+    const key = `${String(info.dev)}:${String(info.ino)}`;
+    const isMain = resolution === null || resolution.worktree === null;
+    const live = liveByKey.get(key);
+    if (live === undefined || (!live.isMain && isMain)) liveByKey.set(key, { project, isMain });
+  }
+  if (ledgerChanged) await saveLedger(localDir, ledger);
+
+  // エイリアス（旧パス縮約 → 新パス縮約）。元の id からのみ引くため適用は 1 ホップで止まる
+  const aliasByOldId = new Map<string, string>();
+  for (const [oldPath, newPath] of Object.entries(aliases)) {
+    const oldId = pathGroupId(oldPath);
+    const newId = pathGroupId(newPath);
+    if (oldId !== newId) aliasByOldId.set(oldId, newId);
+  }
+
+  const retag = (project: ProjectEntry, id: string): void => {
+    project.id = id;
+    for (const session of project.sessions) session.projectId = id;
+  };
+  let renamed = false;
+  for (const project of projects) {
+    const aliasTarget = aliasByOldId.get(project.id);
+    if (aliasTarget !== undefined) {
+      retag(project, aliasTarget);
+      renamed = true;
+      continue;
+    }
+    if (!vanished.has(project)) continue;
+    const entry = ledger.entries[project.id];
+    if (entry === undefined) continue;
+    const live = liveByKey.get(`${String(entry.dev)}:${String(entry.ino)}`);
+    if (live === undefined || live.project.id === project.id) continue;
+    retag(project, live.project.id);
+    renamed = true;
+  }
+  if (!renamed) return projects;
+
+  // 改名で同 id 同ソースになったグループを実併合する（(id, sourceId) 一意の維持。
+  // ソースが違う同 id は #49 の表示統合が束ねるためここでは併合しない）
+  const byKey = new Map<string, ProjectEntry>();
+  const result: ProjectEntry[] = [];
+  for (const project of projects) {
+    const key = `${project.sourceId} ${project.id}`;
+    const receiver = byKey.get(key);
+    if (receiver === undefined) {
+      byKey.set(key, project);
+      result.push(project);
+      continue;
+    }
+    for (const session of project.sessions) {
+      session.projectId = receiver.id;
+      receiver.sessions.push(session);
+    }
+  }
+  return result;
+}
+
 /** worktree 併合の対象ソース（SPEC-CORE-090。#45 で codex を追加）。 */
 const CONSOLIDATED_SOURCES = new Set(['claude', 'codex']);
 
@@ -176,8 +306,10 @@ const CONSOLIDATED_SOURCES = new Set(['claude', 'codex']);
  * claude と codex のグループは併合しない）。解決は毎回 fs を見るだけで
  * キャッシュ等の永続状態に依存しない。
  */
-async function consolidateWorktrees(projects: ProjectEntry[]): Promise<ProjectEntry[]> {
-  const memo = new Map<string, RepoResolution | null>();
+async function consolidateWorktrees(
+  projects: ProjectEntry[],
+  memo: Map<string, RepoResolution | null> = new Map(),
+): Promise<ProjectEntry[]> {
   const resolutions = new Map<ProjectEntry, RepoResolution>();
   for (const project of projects) {
     if (!CONSOLIDATED_SOURCES.has(project.sourceId)) continue;

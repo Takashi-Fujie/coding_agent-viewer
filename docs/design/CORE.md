@@ -151,7 +151,77 @@ function displayProjects(snapshot: Snapshot, source: string | undefined): Displa
 - 一時ディレクトリに claude 形式（`projects/<縮約名>/*.jsonl`）と codex 形式（`sessions/YYYY/MM/DD/rollout-*.jsonl`・session_meta の cwd を同一パスに）の両ソースを手組みし、統合・部分表示・404 を supertest で検証する
 - worktree 併合との複合（codex worktree セッション → 本体 codex グループ → claude グループと表示統合）を 1 ケース含める
 
-## 実測（Issue #2 時点）
+## プロジェクトディレクトリのリネーム追跡（Issue #50）
+
+基本仕様書は [docs/spec/CORE.md](../spec/CORE.md) の同名セクション。API・DTO の変更はない。
+
+### データモデル
+
+```ts
+// server/core/rename.ts（新設）
+/** ディレクトリ識別子。リネーム（mv）で不変、別ボリューム移動で dev が変わる。 */
+interface DirIdentity {
+  dev: number;
+  ino: number;
+  /** 記録時点の実パス（デバッグ・手動マッピング作成の手がかり用）。 */
+  cwd: string;
+  /** 識別子（dev / ino / cwd）が変わったときの記録時刻。無変化の載せ替えでは更新しない。 */
+  recordedAt: string; // ISO 8601
+}
+
+// local/dir-identity.json（機械管理・自動記録）
+interface IdentityLedger {
+  schemaVersion: number;
+  /** キーはパス縮約のグループ id（ソース中立。claude / codex 同 id は同一ディレクトリを指す）。 */
+  entries: Record<string, DirIdentity>;
+}
+
+// local/project-aliases.json（ユーザー編集）
+interface AliasFile {
+  /** 旧 cwd 実パス → 新 cwd 実パス。突き合わせは pathGroupId() で縮約して行う。 */
+  aliases: Record<string, string>;
+}
+```
+
+- `StoreOptions` に `localDir: string` を追加する（台帳・エイリアスの置き場。本番はリポジトリ直下 `local/`、テストは一時ディレクトリ）。`AppOptions` にも同名オプションを追加して注入する
+- `local/` を `.gitignore` に追加する（実パスを含むため public リポジトリにコミットさせない）
+
+### 適用位置と処理フロー（consolidateRenames）
+
+`loadSnapshot` の **`regroupCodexByCwd` の後・`consolidateWorktrees` の前**に置き、`resolveRepo` の結果（cwd → 解決）のメモを worktree 併合と共有する。この位置である理由:
+
+- **worktree 併合の前**: 本体リポジトリごとリネームされると、旧 worktree グループの cwd も消失して `.git` を辿れず、worktree 併合では救済できない。台帳を「併合前のグループ id → **解決済み本体ルート**の識別子」で記録しておけば、worktree グループ自身が台帳経由で新本体の id へ合流し、その後の worktree 併合・#49 表示統合が同 id を束ねる
+- **旧ログディレクトリは永続する**: リネーム後も `projects/<旧名>/` は残り続けて毎回再発見される。rename 併合は一度きりの移行ではなく**毎スナップショットで冪等に適用される変換**であり、台帳エントリは削除しない（worktree 併合と同じ「毎回解決」モデル）
+
+処理順:
+
+1. **識別パスの決定**: 各プロジェクト（併合前グループ）の識別パスを `resolveRepo(representativeCwd)?.root ?? representativeCwd` とする（代表 cwd が無いグループは対象外）
+2. **台帳記録**: 識別パスを stat し、実在すれば台帳へ `id → {dev, ino, cwd, recordedAt}` を記録（dev / ino / cwd が既存エントリと同じなら書き換えない）。不実在なら「消失プロジェクト」として控える
+3. **エイリアス改名**: 縮約した旧パスに id が一致するプロジェクトを新パス縮約の id へ改名する（1 ホップのみ。改名後の id へ再適用しない。旧 = 新の自己参照は無視。エイリアス適用済みのグループは 4 の対象にしない）
+4. **rename 改名**: 消失プロジェクトごとに台帳の記録を引き、現存プロジェクトの識別子 `(dev, ino)` と一致したら**その現存プロジェクトの id へ改名**する
+5. **改名の実体**: 同 id 同 sourceId のプロジェクトが現存すればセッションを併合（`projectId` 書き換え）し、無ければ id の付け替えのみ行う（(id, sourceId) 一意の維持。ソースが違う場合は #49 の表示統合が同 id を束ねる）
+6. 台帳に変化があったときだけ atomic write（tmp + rename）で書き戻す
+
+- 併合セッションの `worktree` ラベルは変更しない（リネームは worktree ではない）
+- id 付け替えのみの場合（新側にグループが無い）、表示パスは従来どおりセッション cwd 由来（旧パス）のまま。新側でセッションが生まれた時点で自然に合流する
+- 台帳・エイリアスのファイルが無い・壊れている場合は空扱いで続行する（誤統合は起きず、統合されないだけ）
+- コストはプロジェクト数ぶんの stat + 台帳 JSON の read（+ 変化時のみ write）のみ。`resolveRepo` は worktree 併合とメモを共有し二重解決しない
+
+### 実測値（2026-08-13・Issue #50 実装時）
+
+実ログ（claude + codex）で localDir あり / なしのスナップショットが 24 グループ / 64 セッション /
+21,803 レコードで完全一致（リネーム未発生の環境では挙動不変）。台帳は 22 エントリ
+（代表パスを持たない日付フォールバック・空グループは対象外）、ino 重複 4 件は
+claude / codex 同一ディレクトリと worktree 解決の重なりによる期待値。`npm run report` 照合 OK。
+
+### テスト方針
+
+- 一時ディレクトリに実在する「作業ディレクトリ」と claude 形式ログを手組みし、`loadSnapshot` を 2 回呼ぶ（1 回目で台帳記録 → 作業ディレクトリを `rename` → 旧 cwd のログはそのまま新 cwd の別グループを追加 → 2 回目で併合を検証）
+- 別ボリューム移動（dev 不一致）は台帳エントリの dev を書き換えて再現する
+- エイリアスは実ディレクトリ無しで検証できる（縮約 id の突き合わせのみ）
+- フィクスチャの cwd は合成パスのみ（public リポジトリのため実パスを書かない）
+
+
 
 | 指標 | 値 |
 |---|---|
@@ -247,6 +317,19 @@ function displayProjects(snapshot: Snapshot, source: string | undefined): Displa
 - [x] `SPEC-CORE-094` cwd を持たない日付フォールバックグループは統合されず従来どおり単独で表示される
 - [x] `SPEC-CORE-095` worktree 併合の合成 id も接頭辞なしになり、ソースをまたぐ併合はされない（同一本体ルートの claude / codex は別グループのまま表示層で束ねる）
 - [x] `SPEC-CORE-096` claude ソース単独の環境では一覧・詳細・集計の id・値・並びが従来と一致する（プロジェクト DTO の source → sources 改名を除き既存テスト不変）
+
+### プロジェクトディレクトリのリネーム追跡（Issue #50）
+
+- [x] `SPEC-CORE-100` スナップショット構築のたびに、識別パス（worktree 解決済みの本体ルート優先・無ければ代表 cwd）が実在するグループの (dev, ino, cwd) を台帳 dir-identity.json へグループ id キーで記録する
+- [x] `SPEC-CORE-101` 代表パスが実在しないプロジェクトは、台帳の識別子 (dev, ino) が現存プロジェクトの識別子と一致すれば現存側の id へ改名・併合される
+- [x] `SPEC-CORE-102` 改名先に同 id 同ソースのプロジェクトが現存する場合はセッションが併合され projectId が併合先になる（(id, sourceId) 一意を維持）
+- [x] `SPEC-CORE-103` 台帳に記録が無い・識別子が一致しない（dev 違いを含む）消失プロジェクトは従来どおり単独のまま残る
+- [x] `SPEC-CORE-104` 台帳・エイリアスのファイルが無い・壊れた JSON の場合は空扱いで続行し、エラーにも誤統合にもならない
+- [x] `SPEC-CORE-105` project-aliases.json の旧パスに縮約 id が一致するプロジェクトは新パス縮約の id へ改名され、適用は 1 ホップのみ（改名後の id へ再適用しない）
+- [x] `SPEC-CORE-106` rename / エイリアス併合後の旧 id は projects 一覧に現れず /api/projects/:id は 404 になる
+- [x] `SPEC-CORE-107` rename 併合はソース不問で適用され、代表パスを持たないグループ（codex 日付フォールバック・claude 空グループ）は台帳記録・併合の対象にならない
+- [x] `SPEC-CORE-108` 本体リポジトリごとリネームされた場合も、worktree グループを含む全セッションが新 id のプロジェクトへ統合される（台帳は解決済み本体ルートの識別子を記録する）
+- [x] `SPEC-CORE-109` 併合は集計値を変えない（/api/overview の合計が併合の前後で一致する）
 
 ### 実測値照合レポート（Issue #4・`scripts/report.ts`）
 
