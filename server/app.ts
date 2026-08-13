@@ -39,6 +39,11 @@ export interface AppOptions {
   codexSessionsDir?: string | undefined;
   /** 価格表のパス。省略時は server/pricing.json。 */
   priceTablePath?: string | undefined;
+  /**
+   * リネーム追跡の台帳・エイリアスの置き場（SPEC-CORE-100〜109。本番はリポジトリ直下
+   * `local/`・gitignore 済み）。省略時はリネーム追跡を行わない。
+   */
+  localDir?: string | undefined;
   /** フロントエンドのビルド成果物（本番は web/dist）。存在するときだけ静的配信する。 */
   webDistDir?: string | undefined;
   /**
@@ -63,7 +68,7 @@ export function createApp(options: AppOptions): Express {
   }
   const sources = roots.map((r) => r.source);
   const ctx: ApiContext = {
-    load: () => loadSnapshot({ sources, cacheDir: options.cacheDir }),
+    load: () => loadSnapshot({ sources, cacheDir: options.cacheDir, localDir: options.localDir }),
     loadTable,
     claudeDir: options.claudeDir,
     hub: options.hub ?? createLiveHub({ roots, cacheDir: options.cacheDir, loadTable }),
