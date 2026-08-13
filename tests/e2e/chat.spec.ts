@@ -1,5 +1,5 @@
 /**
- * SPEC-CHAT の E2E（SPEC-CHAT-070〜074）。仕様は docs/design/CHAT.md。
+ * SPEC-CHAT の E2E（SPEC-CHAT-070〜076）。仕様は docs/design/CHAT.md。
  */
 import { expect, test } from '@playwright/test';
 import {
@@ -70,6 +70,25 @@ test('SPEC-CHAT-073: やりとり別コスト棒グラフの帯クリックで�
 
   await page.getByRole('button', { name: '✕' }).click();
   await expect(page.getByText('のみ表示')).not.toBeVisible();
+});
+
+test('SPEC-CHAT-076: compact 済み（グレー）の帯もクリックで会話が絞り込まれ、解除できる', async ({
+  page,
+}) => {
+  await page.goto(sessionUrl(SESSION_COMPACT));
+  await expect(page.getByText('圧縮後のやりとり。', { exact: false })).toBeVisible();
+
+  // やりとり #1（圧縮前）は compact_boundary より前に開始 = compacted（グレー表示）
+  await page.getByTestId('turn-band-0').click();
+  await expect(page.getByText('のみ表示')).toBeVisible();
+
+  // 絞り込み結果は compacted のやりとりだけになる
+  await expect(page.getByText('圧縮前のやりとり。', { exact: false })).toBeVisible();
+  await expect(page.getByText('圧縮後のやりとり。', { exact: false })).not.toBeVisible();
+
+  await page.getByRole('button', { name: '✕' }).click();
+  await expect(page.getByText('のみ表示')).not.toBeVisible();
+  await expect(page.getByText('圧縮後のやりとり。', { exact: false })).toBeVisible();
 });
 
 test('SPEC-CHAT-074: 巨大行（50KB 超）を含むセッションの分析画面が表示される', async ({ page }) => {

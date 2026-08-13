@@ -173,7 +173,7 @@ export function SessionView({ projectId, sessionId }: SessionViewProps) {
           </h2>
           <TurnCostChart exchanges={exchanges} selected={selected} onSelect={setSelected} markers={markers} />
           {exchanges.some((e) => e.compacted) && (
-            <div className="note">グレーの棒は compact で要約済みのやりとり（クリック不可）</div>
+            <div className="note">グレーの棒は compact で要約済みのやりとり</div>
           )}
         </div>
         <div className="cols2">
