@@ -241,7 +241,7 @@ describe('TurnCostChart', () => {
     { index: 1, startIndex: 3, endIndex: 6, preview: '後半', total: 0.05, compacted: false },
   ];
 
-  it('SPEC-CHAT-044: 帯クリックで絞り込み、再クリックで解除する。compacted はクリック不可', () => {
+  it('SPEC-CHAT-044: 帯クリックで絞り込み、再クリックで解除する', () => {
     const onSelect = vi.fn();
     const { rerender } = render(
       <TurnCostChart exchanges={exchanges} selected={null} onSelect={onSelect} />,
@@ -253,10 +253,22 @@ describe('TurnCostChart', () => {
     rerender(<TurnCostChart exchanges={exchanges} selected={1} onSelect={onSelect} />);
     fireEvent.click(screen.getByTestId('turn-band-1'));
     expect(onSelect).toHaveBeenLastCalledWith(null);
+  });
 
-    onSelect.mockClear();
+  it('SPEC-CHAT-045: compacted の帯もクリックで絞り込みでき、グレー表示は維持する', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <TurnCostChart exchanges={exchanges} selected={null} onSelect={onSelect} />,
+    );
+
+    // クリックで絞り込みできる（Issue #55 でクリック不可の制限を撤廃）
     fireEvent.click(screen.getByTestId('turn-band-0'));
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenLastCalledWith(0);
+
+    // グレー表示（var(--baseline)）による compact 済みの区別は維持する
+    const bars = container.querySelectorAll('[data-testid="turn-band-0"] rect');
+    const gray = Array.from(bars).some((r) => r.getAttribute('fill') === 'var(--baseline)');
+    expect(gray).toBe(true);
   });
 
   it('SPEC-CHAT-081: markers の位置ごとに ⚡ マーカーを描画し、本数が一致する', () => {

@@ -1,6 +1,6 @@
 /**
  * やりとり別コスト棒グラフ（SPEC-CHAT-044/045/081）。
- * 帯クリックで絞り込み・再クリックで解除。compact 済みはグレーでクリック不可。
+ * 帯クリックで絞り込み・再クリックで解除。compact 済みはグレーで区別する（クリックは可能）。
  * compaction 発生位置には ⚡ マーカーを立てる。
  */
 import { formatUsd } from '../lib/format';
@@ -47,9 +47,8 @@ export function TurnCostChart({ exchanges, selected, onSelect, markers }: TurnCo
           <g
             key={exchange.index}
             data-testid={`turn-band-${exchange.index}`}
-            style={{ cursor: exchange.compacted ? 'default' : 'pointer' }}
+            style={{ cursor: 'pointer' }}
             onClick={() => {
-              if (exchange.compacted) return;
               onSelect(isSelected ? null : exchange.index);
             }}
           >
