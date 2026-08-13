@@ -118,6 +118,8 @@ Claude Code を git worktree 内で起動したセッションが、ダッシュ
 - `local/dir-identity.json` — inode 台帳（viewer が自動記録・機械管理）
 - `local/project-aliases.json` — 手動マッピング（ユーザー編集。旧パス → 新パスを実パスで書く）
 
+手動マッピングのフォーマット例は **`local/project-aliases.sample.json`**（合成パスのみ・コミット対象）に置く。ユーザーはこれを `project-aliases.json` へコピーして実パスに書き換える。
+
 台帳が消えた場合は、それ以前に消失したディレクトリの追跡情報だけが失われる（以後の記録は再開される。手動マッピングで救済可能）。
 
 ### やらないこと・制限

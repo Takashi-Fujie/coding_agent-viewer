@@ -1,0 +1,7 @@
+{
+  "$comment": "プロジェクトディレクトリのリネームを手動で対応付けるサンプル（Issue #50）。local/project-aliases.json にコピーして実パスへ書き換える。キーが旧パス・値が新パス（いずれも実パスで書く。1 ホップのみ・多段の連鎖は解決しない）。このファイル自体は合成パスのみの例で、実パスを書いた project-aliases.json は gitignore されコミットされない。",
+  "aliases": {
+    "/home/dev/projects/old-name": "/home/dev/projects/new-name",
+    "/home/dev/projects/renamed-twice-intermediate": "/home/dev/projects/final-name"
+  }
+}
